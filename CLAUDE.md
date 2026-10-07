@@ -99,22 +99,24 @@ tables you've marked private), etc.
 
 Log work hours and wages, track cash advances, and generate proof of income
 
-_(add a sentence or two more of product context here so Claude Code has a
-shared understanding of what this app is for)_
+For daily-wage and gig workers with irregular income, some with low digital
+literacy. Logging a day must take under 30 seconds and at most 3 steps. Use
+everyday words ("wage", "advance", "paid", "unpaid", "partly paid"), never
+financial jargon. Later goals from the original request, not built yet:
+history filters, a PDF income report, offline use, a 6 pm reminder, backup,
+and several profiles on one device.
 
 ## Design
 
 This app's look. The first real version fills in the blanks; every later
 change follows it, and updates it when a request changes the look on purpose.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
-- **Signature element:** _(the one thing on screen drawn from this app's
-  subject, which no other app would have)_
+- **Palette:** accent: burnt orange; second: green, only for "Paid"
+  (`text-good`); neutrals: warm paper ground and brown ink.
+- **Signature element:** the date stamp on every entry (big day number over
+  the month, on a raised tile), like a page in a paper wage book.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
@@ -139,6 +141,14 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- Money is stored as integer cents (BIGINT) and shown as a plain grouped
+  number with no currency symbol.
+- Advance balances are derived, never stored: per client,
+  `owed = max(0, unpaid - advances)` and
+  `advance left = max(0, advances - unpaid)` (`settle()` in `wagebook.js`).
+- All four tables (`profiles`, `clients`, `work_logs`, `advances`) are
+  `staging:private`. The staging seed belongs to the fake owner
+  `staging-demo-user` and is shown only for reads behind `?demo=1`; saves
+  always go to the signed-in person's own book.
+- "Today" and "this week" follow the page's local date (sent as `?today=`);
+  weeks start on Monday.

@@ -4,5 +4,40 @@
   "visibility": {
     "build": "public",
     "view": "public"
-  }
+  },
+  "tests": [
+    {
+      "id": "dashboard.demo",
+      "name": "Dashboard shows totals, weekly chart and client balances (demo data)",
+      "path": "/?demo=1",
+      "expectSelector": "#weekly-chart",
+      "expectText": "Advance left",
+      "visual": true,
+      "impact": ["public/app.js", "public/index.html", "styles/**", "wagebook.js"]
+    },
+    {
+      "name": "Dashboard with an empty book offers to log the first day",
+      "path": "/",
+      "expectSelector": "#empty-book",
+      "expectText": "Your wage book is empty"
+    },
+    {
+      "name": "Log today's work opens on step 1 with saved clients",
+      "path": "/log?demo=1",
+      "expectSelector": "[data-client]",
+      "expectText": "Step 1 of 3"
+    },
+    {
+      "name": "Take an advance form",
+      "path": "/advance?demo=1",
+      "expectSelector": "#amount",
+      "expectText": "Who gave you the advance?"
+    },
+    {
+      "name": "Profile form",
+      "path": "/profile",
+      "expectSelector": "#occupation",
+      "expectText": "Your work"
+    }
+  ]
 }

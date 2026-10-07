@@ -52,6 +52,7 @@ module.exports = {
         line: token('line'), // borders, dividers, skeletons
         accent: token('accent'), // the one accent: the primary action
         'on-accent': token('on-accent'), // text on the accent
+        good: token('good'), // "paid"
         danger: token('danger'),
         'on-danger': token('on-danger'),
         focus: token('focus'), // the keyboard focus ring
