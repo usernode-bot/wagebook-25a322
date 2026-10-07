@@ -1,27 +1,38 @@
-# Wagebook
+# WageBook
 
-> **Starter template** — this repo was scaffolded by Homeroom Social
-> Vibecoding. Everything in it is placeholder example code until the
-> app's first real feature is built.
+An income and work log for daily-wage and gig workers: construction
+workers, carpenters, welders, drivers, domestic helpers and freelancers.
 
-The scaffold is a small working demo that proves the plumbing works:
+## What it does
 
-- **Sign-in** — the server verifies the platform-issued user token
-  (an RS256 JWT) on every request, so the app already knows who is
-  using it. No accounts to build.
-- **Database** — the app has its own private Postgres database, ready
-  to store things.
-- **Styling** — Tailwind CSS, precompiled by `npm run build` during
-  image creation with either Kubernetes/Paketo or standalone Docker, in a
-  light and a dark look that follow the viewer's Homeroom theme.
+- **Dashboard**: what you earned this month and this week, unpaid wages
+  owed to you, advances you still have to work off, a bar chart of the
+  last 8 weeks, a balance per client and your recent entries.
+- **Log today's work** (`/log`), three steps: the day and who you worked
+  for, how much (by the day or by the hour, total worked out for you and
+  editable), and whether you were paid (paid, unpaid or partly paid, with
+  an optional proof photo). Clients you use are saved, and picking one
+  fills in what you logged for them last time.
+- **Take an advance** (`/advance`): the day, the client and the amount.
+- **Profile** (`/profile`): name, photo, type of work and town.
 
-## Replacing the template
+### How advances work
 
-To change this app, ask Homeroom bot: open the app on Homeroom, tap the
-Homeroom icon in the header, then **Suggest an improvement**, and describe
-the app you want in plain English. The template will be replaced with your
-real app. You can also run
-Claude Code against this repo directly; start with `CLAUDE.md`, which
-carries the app-specific notes and points at the platform rules.
+Each client's advances are taken from the unpaid wages that same client
+owes you. Per client, WageBook adds up unpaid wages (total minus what was
+paid) and advances. If wages are larger, the difference is still owed to
+you; if advances are larger, the difference is the advance balance you
+still have to work off. Nothing is rewritten when you take an advance: the
+balance is always worked out from the entries.
 
-Once the real app exists, rewrite this README to describe it.
+## How it is built
+
+- `server.js`: Express server, Homeroom sign-in, graceful shutdown.
+- `wagebook.js`: the Postgres schema (`profiles`, `clients`, `work_logs`,
+  `advances`, all private), the staging demo seed and the `/api` routes.
+- `public/app.js`: the page (vanilla JS, routed by path).
+- `styles/tailwind-input.css` and `tailwind.config.js`: the colour tokens
+  and components, compiled by `npm run build` during the image build.
+
+On a staging preview, add `?demo=1` to see a filled-in demo book
+("Staging demo builder", "Staging demo cafe", "Staging demo family").
