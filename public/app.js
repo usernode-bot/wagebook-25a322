@@ -1,8 +1,11 @@
-// WageBook: the page. Four screens, routed by path:
-//   /          the dashboard
-//   /log       "Log today's work", three steps
-//   /advance   "Take an advance"
-//   /profile   your name, photo, work and town
+// WageBook: the page. Screens, routed by path:
+//   /            the dashboard
+//   /log         "Log today's work", three steps
+//   /advance     "Take an advance"
+//   /prices      "Prices and profit": your items and this week's ranking
+//   /prices/new  add an item: costs, profit goal, suggested price
+//   /prices/:id  one item: change its prices, see its history
+//   /profile     your name, photo, work and town
 // Class names are written as whole literals so the Tailwind build sees them.
 (function () {
   'use strict';
@@ -54,11 +57,12 @@
   }
 
   // A save always lands in the person's own book, so leave the read-only
-  // demo view and show it.
-  function saved(msg) {
+  // demo view and show it. Most saves go back to the dashboard; the prices
+  // screens go back to the item list.
+  function saved(msg, path) {
     demo = false;
     toast(msg);
-    go('/');
+    go(path || '/');
   }
 
   function toast(msg) {
@@ -75,6 +79,9 @@
     user: '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
     back: '<path d="m15 18-6-6 6-6"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    tag: '<path d="M12 2H2v10l9.3 9.3a1 1 0 0 0 1.4 0l8.6-8.6a1 1 0 0 0 0-1.4z"/><circle cx="7" cy="7" r="1.5"/>',
+    alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+    x: '<path d="M18 6 6 18M6 6l12 12"/>',
   };
   function icon(name, cls) {
     return '<svg class="' + (cls || 'h-6 w-6') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
@@ -105,6 +112,10 @@
     if (p === '/log') return renderLog();
     if (p === '/advance') return renderAdvance();
     if (p === '/profile') return renderProfile();
+    if (p === '/prices') return renderPrices();
+    if (p === '/prices/new') return renderItem(null);
+    var m = p.match(/^\/prices\/(\d+)$/);
+    if (m) return renderItem(Number(m[1]));
     return renderDashboard();
   }
 
@@ -114,14 +125,15 @@
       : '';
   }
 
-  function backBar(title, label) {
+  function backBar(title, label, target) {
+    var to = target || '/';
     return '<header class="flex items-center gap-2">' +
-      '<a href="' + href('/') + '" data-nav="/" class="btn-secondary px-3" aria-label="' + (label ? 'Cancel and go back to the dashboard' : 'Back to dashboard') + '">' + icon('back', 'h-5 w-5') + '<span>' + (label || 'Back') + '</span></a>' +
+      '<a href="' + href(to) + '" data-nav="' + to + '" class="btn-secondary px-3" aria-label="Back">' + icon('back', 'h-5 w-5') + '<span>' + (label || 'Back') + '</span></a>' +
       '<h1 class="text-heading">' + esc(title) + '</h1></header>';
   }
 
-  function errorState(msg, retry) {
-    app.innerHTML = '<div class="state-error card"><p class="text-heading">Could not load your wage book</p>' +
+  function errorState(msg, retry, title) {
+    app.innerHTML = '<div class="state-error card"><p class="text-heading">' + esc(title || 'Could not load your wage book') + '</p>' +
       '<p class="text-body text-muted">' + esc(msg) + ' Nothing you saved is lost.</p>' +
       '<button type="button" class="btn-primary mt-2" id="retry">Retry</button></div>';
     document.getElementById('retry').onclick = retry;
@@ -155,7 +167,23 @@
       '<div class="flex flex-col gap-3">' +
         '<a href="' + href('/log') + '" data-nav="/log" class="btn-primary min-h-16 text-heading" id="log-work">' + icon('plus', 'h-7 w-7') + 'Log today\'s work</a>' +
         '<a href="' + href('/advance') + '" data-nav="/advance" class="btn-secondary min-h-14 text-heading" id="take-advance">' + icon('banknote', 'h-6 w-6') + 'Take an advance</a>' +
+        '<a href="' + href('/prices') + '" data-nav="/prices" class="btn-secondary min-h-14 text-heading" id="open-prices">' + icon('tag', 'h-6 w-6') + 'Prices and profit</a>' +
       '</div>';
+
+    // Drawn before the empty-book branch, so a vendor who never logs a work
+    // day still sees them.
+    if (d.priceAlerts && d.priceAlerts.length) {
+      html += '<section id="price-alerts" aria-label="Prices to check"><h2 class="section-label">Prices to check</h2><ul class="list">' +
+        d.priceAlerts.map(function (p) {
+          return '<a href="' + href('/prices/' + p.id) + '" data-nav="/prices/' + p.id + '" class="list-row">' +
+            '<span class="shrink-0 text-danger">' + icon('alert', 'h-6 w-6') + '</span>' +
+            '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">' + esc(p.name) + '</p>' +
+            '<p class="text-small text-muted">' + (p.costRoseCents > 0 ? 'Costs went up. ' : '') +
+            'Profit is ' + p.marginPct + '%, your goal is ' + p.goalPct + '%.</p></div>' +
+            '<div class="shrink-0 text-right"><p class="text-small text-muted">Suggested price</p>' +
+            '<p class="text-body font-semibold tabular-nums">' + money(p.suggestedCents) + '</p></div></a>';
+        }).join('') + '</ul></section>';
+    }
 
     if (!hasData) {
       html += '<section class="state-empty card" id="empty-book">' +
@@ -603,6 +631,281 @@
       btn.disabled = true;
       api('/api/advances', { method: 'POST', body: { date: s.date, client: s.client, amount: num(s.amount) } })
         .then(function () { saved('Advance saved'); })
+        .catch(function (err) { btn.disabled = false; formError(err.message); });
+    });
+  }
+
+  // ── Prices and profit ────────────────────────────────────────────────────
+  // The price maths, the page's copy of wagebook.js's one definition, so the
+  // live readout matches what the server stores. What you make at a price is
+  // said in the same words everywhere ("you make N per item (P%)", or
+  // "you lose N per item").
+  function suggestedPrice(costCents, pct) {
+    return Math.ceil((costCents * 100) / (100 - pct) / 100) * 100;
+  }
+  function priceFacts(costCents, sellCents, pct) {
+    var profitCents = sellCents - costCents;
+    return {
+      profitCents: profitCents,
+      marginPct: Math.floor((profitCents * 100) / sellCents),
+      belowGoal: profitCents * 100 < pct * sellCents,
+      suggestedCents: suggestedPrice(costCents, pct),
+    };
+  }
+
+  function renderPrices() {
+    app.innerHTML = backBar('Prices and profit') +
+      '<div class="flex flex-col gap-4" aria-busy="true"><div class="skeleton h-14 w-full"></div><div class="skeleton h-48 w-full"></div></div>';
+    Promise.all([me ? Promise.resolve(me) : loadMe(), api('/api/products?today=' + today())])
+      .then(function (r) { drawPrices(r[1]); })
+      .catch(function (err) { errorState(err.message, renderPrices, 'Could not load your prices'); });
+  }
+
+  function drawPrices(d) {
+    var html = backBar('Prices and profit') + demoNote();
+    if (!d.products.length) {
+      html += '<section class="state-empty card" id="empty-prices">' +
+        '<p class="text-heading">No items yet</p>' +
+        '<p class="text-body text-muted">Add an item you sell and what it costs you. WageBook suggests a price and shows your profit.</p>' +
+        '<a href="' + href('/prices/new') + '" data-nav="/prices/new" class="btn-primary mt-2" id="add-item">' + icon('plus', 'h-5 w-5') + 'Add an item</a></section>';
+      app.innerHTML = html;
+      return;
+    }
+    html += '<a href="' + href('/prices/new') + '" data-nav="/prices/new" class="btn-primary min-h-14 text-heading">' + icon('plus', 'h-6 w-6') + 'Add an item</a>';
+    html += '<section aria-label="Your items"><h2 class="section-label">Your items</h2><ul class="list" id="price-items">' +
+      d.products.map(function (p) {
+        var sub = p.belowGoal
+          ? '<p class="text-small text-danger">Below your ' + p.goalPct + '% profit goal. Suggested price ' + money(p.suggestedCents) + '</p>'
+          : '<p class="text-small text-muted">Profit goal ' + p.goalPct + '%, now ' + p.marginPct + '%</p>';
+        var profitLine = p.profitCents >= 0 ? 'Profit ' + money(p.profitCents) : 'You lose ' + money(-p.profitCents);
+        return '<a href="' + href('/prices/' + p.id) + '" data-nav="/prices/' + p.id + '" class="list-row">' +
+          '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">' + esc(p.name) + '</p>' + sub + '</div>' +
+          '<div class="shrink-0 text-right"><p class="text-body font-semibold tabular-nums">' + money(p.sellCents) + '</p>' +
+          '<p class="text-small text-muted tabular-nums">' + profitLine + '</p></div></a>';
+      }).join('') + '</ul></section>';
+    if (d.products.length >= 2) {
+      html += '<section id="week-summary" aria-label="This week, most profitable first"><h2 class="section-label">This week, most profitable first</h2><ul class="list">' +
+        d.week.map(function (p, i) {
+          var tag = i === 0 ? '<p class="text-small font-semibold">Most profitable</p>'
+            : (i === d.week.length - 1 ? '<p class="text-small font-semibold">Least profitable</p>' : '');
+          var rose = p.weekCostChangeCents > 0
+            ? '<p class="text-small text-accent">Cost up ' + money(p.weekCostChangeCents) + ' since Monday</p>' : '';
+          return '<a href="' + href('/prices/' + p.id) + '" data-nav="/prices/' + p.id + '" class="list-row">' +
+            '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">' + esc(p.name) + '</p>' + tag + rose + '</div>' +
+            '<div class="shrink-0 text-right"><p class="text-body font-semibold tabular-nums' + (p.belowGoal ? ' text-danger' : '') + '">' + p.marginPct + '%</p>' +
+            '<p class="text-small text-muted tabular-nums">' + money(p.profitCents) + ' per item</p></div></a>';
+        }).join('') + '</ul></section>';
+    }
+    app.innerHTML = html;
+  }
+
+  function renderItem(id) {
+    app.innerHTML = '<div class="flex flex-col gap-4" aria-busy="true"><div class="skeleton h-11 w-48"></div><div class="skeleton h-24 w-full"></div><div class="skeleton h-40 w-full"></div></div>';
+    var loads = [me ? Promise.resolve(me) : loadMe()];
+    if (id) loads.push(api('/api/products/' + id + '?today=' + today()));
+    Promise.all(loads).then(function (r) { drawItem(id, id ? r[1] : null); })
+      .catch(function (err) {
+        if (err.status === 404) {
+          app.innerHTML = backBar('Item', null, '/prices') +
+            '<div class="state-error card"><p class="text-heading">That item is not in your book</p>' +
+            '<p class="text-body text-muted">It may have been saved by someone else, or the link is old.</p>' +
+            '<a href="' + href('/prices') + '" data-nav="/prices" class="btn-secondary mt-2">Back to prices</a></div>';
+          return;
+        }
+        errorState(err.message, function () { renderItem(id); }, 'Could not load your prices');
+      });
+  }
+
+  function drawItem(id, data) {
+    var isNew = !data;
+    var p = isNew
+      ? { name: '', goalPct: 20, batchSize: 1, sellCents: null,
+          costs: [{ name: 'Ingredients', cents: null }, { name: 'Packaging', cents: null }, { name: 'Gas', cents: null }] }
+      : data.product;
+    var s = {
+      name: p.name, goal: String(p.goalPct), batch: String(p.batchSize),
+      sell: p.sellCents ? String(p.sellCents / 100) : '',
+      sellTouched: !!p.sellCents,
+      costs: p.costs.map(function (c) {
+        return { name: c.name, amount: c.cents == null ? '' : String(c.cents / 100) };
+      }),
+    };
+
+    function rebuildRows() {
+      var box = document.getElementById('cost-rows');
+      box.innerHTML = s.costs.map(function (c, i) {
+        return '<div class="flex gap-2">' +
+          '<input class="field min-w-0 flex-1" maxlength="40" data-cost-name="' + i + '" value="' + esc(c.name) + '" placeholder="e.g. Gas" aria-label="Cost name">' +
+          '<input class="field w-24 shrink-0 tabular-nums" inputmode="decimal" data-cost-amount="' + i + '" value="' + esc(c.amount) + '" placeholder="e.g. 5000" aria-label="You paid">' +
+          '<button type="button" class="btn-secondary w-11 shrink-0 px-0' + (s.costs.length === 1 ? ' hidden' : '') + '" data-remove="' + i + '" aria-label="Remove ' + esc(c.name || 'cost') + '">' + icon('x', 'h-5 w-5') + '</button></div>';
+      }).join('');
+      box.querySelectorAll('[data-cost-name]').forEach(function (el) {
+        el.addEventListener('input', function () { s.costs[+el.getAttribute('data-cost-name')].name = el.value; });
+      });
+      box.querySelectorAll('[data-cost-amount]').forEach(function (el) {
+        el.addEventListener('input', function () {
+          s.costs[+el.getAttribute('data-cost-amount')].amount = el.value;
+          update();
+        });
+      });
+      box.querySelectorAll('[data-remove]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          s.costs.splice(+b.getAttribute('data-remove'), 1);
+          rebuildRows();
+          update();
+        });
+      });
+    }
+
+    function update() {
+      var total = 0, any = false;
+      s.costs.forEach(function (c) {
+        var v = num(c.amount);
+        if (isFinite(v) && v >= 0) { total += Math.round(v * 100); any = true; }
+      });
+      var batch = num(s.batch);
+      var goal = num(s.goal);
+      goal = isFinite(goal) ? Math.min(90, Math.max(0, Math.round(goal))) : null;
+      var costPer = batch > 0 && any ? Math.round(total / batch) : null;
+      var sug = costPer != null && goal != null ? suggestedPrice(costPer, goal) : null;
+      document.getElementById('cost-per-item').innerHTML = costPer != null
+        ? 'Cost per item: <strong class="tabular-nums">' + money(costPer) + '</strong>' : '';
+      var res = document.getElementById('price-result');
+      if (sug != null) {
+        var f = priceFacts(costPer, sug, goal);
+        res.innerHTML = '<p class="text-small font-medium text-muted">Suggested price</p>' +
+          '<p class="text-title tabular-nums">' + money(sug) + '</p>' +
+          '<p class="text-small text-muted">Profit per item at that price: ' +
+          (f.profitCents >= 0 ? money(f.profitCents) : 'you lose ' + money(-f.profitCents)) +
+          ' (' + f.marginPct + '%)</p>';
+      } else {
+        res.innerHTML = '<p class="text-small font-medium text-muted">Suggested price</p>' +
+          '<p class="text-body text-muted">Enter your costs to see it.</p>';
+      }
+      var use = document.getElementById('use-suggested');
+      if (sug != null) { use.hidden = false; use.textContent = 'Use ' + money(sug); }
+      else use.hidden = true;
+      // A new item takes the suggestion as its selling price the first time
+      // the costs give one, until the person types in it.
+      if (isNew && !s.sellTouched && sug != null) {
+        s.sell = String(sug / 100);
+        document.getElementById('sell').value = s.sell;
+      }
+      readout(costPer, goal);
+    }
+
+    function readout(costPer, goal) {
+      var el = document.getElementById('live-readout');
+      var sell = Math.round(num(s.sell) * 100);
+      if (!(sell > 0) || costPer == null || goal == null) { el.hidden = true; return; }
+      var f = priceFacts(costPer, sell, goal);
+      var made = f.profitCents >= 0
+        ? 'you make ' + money(f.profitCents) + ' per item (' + f.marginPct + '%)'
+        : 'you lose ' + money(-f.profitCents) + ' per item';
+      el.textContent = 'At ' + money(sell) + ' ' + made + (f.belowGoal ? ', below your goal.' : '.');
+      el.className = f.belowGoal ? 'text-small text-danger' : 'text-small text-muted';
+      el.hidden = false;
+    }
+
+    var warn = '';
+    if (!isNew && p.belowGoal) {
+      var rose = p.prevCostCents != null && p.costRoseCents > 0
+        ? 'Your costs went up from ' + money(p.prevCostCents) + ' to ' + money(p.costCents) + ' per item. ' : '';
+      var made = p.profitCents >= 0
+        ? 'you make ' + money(p.profitCents) + ' per item (' + p.marginPct + '%)'
+        : 'you lose ' + money(-p.profitCents) + ' per item';
+      warn = '<div id="item-warning" class="rounded-lg border border-danger px-3 py-2">' +
+        '<p class="font-semibold text-danger">Below your profit goal</p>' +
+        '<p class="text-body">' + rose + 'At your price of ' + money(p.sellCents) + ' ' + made +
+        '. Your goal is ' + p.goalPct + '%.</p></div>';
+    }
+
+    var history = isNew ? '' :
+      '<section id="price-history" aria-label="Price history"><h2 class="section-label">Price history</h2><ul class="list">' +
+      data.history.map(function (h) {
+        return '<li class="list-row">' + stamp(h.date) +
+          '<div class="min-w-0 flex-1"><p class="text-body font-medium">Cost ' + money(h.costCents) + ', sold at ' + money(h.sellCents) + '</p>' +
+          '<p class="text-small text-muted">' + (h.profitCents >= 0 ? 'Profit ' + money(h.profitCents) : 'You lose ' + money(-h.profitCents)) + ' per item</p></div>' +
+          '<p class="shrink-0 text-body font-semibold tabular-nums' + (h.marginPct < p.goalPct ? ' text-danger' : '') + '">' + h.marginPct + '%</p></li>';
+      }).join('') + '</ul></section>';
+
+    app.innerHTML = backBar(isNew ? 'Add an item' : p.name, null, '/prices') + demoNote() + warn +
+      '<form id="item-form" class="flex flex-col gap-5" novalidate>' +
+      '<div class="flex flex-col gap-2"><label for="item-name" class="text-body font-medium">Item name</label>' +
+      '<input id="item-name" class="field" maxlength="80" value="' + esc(s.name) + '" placeholder="e.g. Iced tea"></div>' +
+      '<fieldset class="flex flex-col gap-2"><legend class="text-body font-medium">Costs</legend>' +
+      '<p class="text-small text-muted">What you paid for one batch.</p>' +
+      '<div class="flex gap-2 text-small text-muted"><span class="min-w-0 flex-1">Cost</span><span class="w-24 shrink-0">You paid</span><span class="w-11 shrink-0"></span></div>' +
+      '<div id="cost-rows" class="flex flex-col gap-2"></div>' +
+      '<button type="button" class="btn-secondary" id="add-cost">' + icon('plus', 'h-5 w-5') + 'Add another cost</button></fieldset>' +
+      '<div class="grid grid-cols-2 gap-3">' +
+      '<div class="flex flex-col gap-2"><label for="batch-size" class="text-body font-medium">Items it makes</label>' +
+      '<input id="batch-size" class="field tabular-nums" inputmode="numeric" value="' + esc(s.batch) + '"></div>' +
+      '<div class="flex flex-col gap-2"><label for="goal" class="text-body font-medium">Profit goal (%)</label>' +
+      '<input id="goal" class="field tabular-nums" inputmode="numeric" value="' + esc(s.goal) + '"></div></div>' +
+      '<p class="text-small text-muted" id="cost-per-item"></p>' +
+      '<div id="price-result" class="rounded-lg bg-raised px-3 py-3"></div>' +
+      '<div class="flex flex-col gap-2"><label for="sell" class="text-body font-medium">Your selling price</label>' +
+      '<div class="flex gap-2"><input id="sell" class="field min-w-0 flex-1 text-heading tabular-nums" inputmode="decimal" value="' + esc(s.sell) + '" placeholder="e.g. 2500">' +
+      '<button type="button" class="btn-secondary" id="use-suggested" hidden></button></div>' +
+      '<p class="text-small" id="live-readout" hidden></p></div>' +
+      errorBox +
+      '<button type="submit" class="btn-primary min-h-14 text-heading" id="save">' + (isNew ? 'Save item' : 'Save new prices') + '</button></form>' +
+      history;
+
+    rebuildRows();
+    update();
+
+    document.getElementById('add-cost').addEventListener('click', function () {
+      if (s.costs.length >= 12) return;
+      s.costs.push({ name: '', amount: '' });
+      rebuildRows();
+      update();
+      var names = document.querySelectorAll('[data-cost-name]');
+      names[names.length - 1].focus();
+    });
+    document.getElementById('item-name').addEventListener('input', function (e) { s.name = e.target.value; });
+    document.getElementById('batch-size').addEventListener('input', function (e) { s.batch = e.target.value; update(); });
+    document.getElementById('goal').addEventListener('input', function (e) { s.goal = e.target.value; update(); });
+    document.getElementById('sell').addEventListener('input', function (e) {
+      s.sell = e.target.value;
+      s.sellTouched = s.sell !== '';
+      update();
+    });
+    document.getElementById('use-suggested').addEventListener('click', function () {
+      var sug = document.querySelector('#price-result .text-title');
+      if (!sug) return;
+      s.sell = sug.textContent.replace(/,/g, '');
+      s.sellTouched = true;
+      document.getElementById('sell').value = s.sell;
+      update();
+    });
+    document.getElementById('item-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      s.name = document.getElementById('item-name').value.trim();
+      s.goal = document.getElementById('goal').value;
+      s.batch = document.getElementById('batch-size').value;
+      s.sell = document.getElementById('sell').value;
+      if (!s.name) return formError("Add the item's name.");
+      var goal = num(s.goal);
+      if (!(goal >= 0 && goal <= 90) || Math.round(goal) !== goal) return formError('Set a profit goal from 0 to 90%.');
+      var batch = num(s.batch);
+      if (!(batch >= 1 && batch <= 100000) || Math.round(batch) !== batch) return formError('Enter how many items these costs make.');
+      var costs = s.costs.map(function (c) { return { name: c.name.trim(), amount: num(c.amount) }; });
+      if (costs.some(function (c) { return !c.name; })) return formError('Name each cost, e.g. Gas.');
+      if (costs.some(function (c) { return !isFinite(c.amount) || c.amount < 0; })) return formError('Enter each cost as a number.');
+      if (!costs.some(function (c) { return c.amount > 0; })) return formError('Enter at least one cost.');
+      if (!(num(s.sell) > 0)) return formError('Enter your selling price.');
+      var btn = document.getElementById('save');
+      btn.disabled = true;
+      var body = { name: s.name, goalPct: goal, batchSize: batch, costs: costs,
+        sell: num(s.sell), date: today() };
+      // On the staging demo, saving a demo item copies it into the person's
+      // own book instead of editing the demo owner's.
+      var demoCopy = me.demo && !isNew;
+      var path = isNew || demoCopy ? '/api/products' : '/api/products/' + id;
+      api(path, { method: isNew || demoCopy ? 'POST' : 'PUT', body: body })
+        .then(function () { saved(isNew || demoCopy ? 'Item saved' : 'Prices saved', '/prices'); })
         .catch(function (err) { btn.disabled = false; formError(err.message); });
     });
   }
