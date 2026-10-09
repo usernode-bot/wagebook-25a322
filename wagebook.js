@@ -78,6 +78,45 @@ CREATE TABLE IF NOT EXISTS advances (
 );
 CREATE INDEX IF NOT EXISTS advances_user_date ON advances (user_id, advance_date);
 COMMENT ON TABLE advances IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS products (
+  id BIGSERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  target_margin_pct INTEGER NOT NULL DEFAULT 20
+    CHECK (target_margin_pct >= 0 AND target_margin_pct <= 90),
+  batch_size INTEGER NOT NULL DEFAULT 1 CHECK (batch_size >= 1 AND batch_size <= 100000),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS products_user_name ON products (user_id, (lower(name)));
+COMMENT ON TABLE products IS 'staging:private';
+
+-- What one batch of an item cost: free-text component names (ingredients,
+-- packaging, gas are only the starting rows). Replaced as a set on save.
+CREATE TABLE IF NOT EXISTS product_costs (
+  id BIGSERIAL PRIMARY KEY,
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  amount_cents BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS product_costs_product ON product_costs (product_id, position);
+COMMENT ON TABLE product_costs IS 'staging:private';
+
+-- One dated entry per save: the cost per item and the price it sold at.
+-- Unique per day, so saving twice on one day replaces that day's entry.
+CREATE TABLE IF NOT EXISTS price_entries (
+  id BIGSERIAL PRIMARY KEY,
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  entry_date DATE NOT NULL,
+  unit_cost_cents BIGINT NOT NULL,
+  sell_price_cents BIGINT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS price_entries_product_date
+  ON price_entries (product_id, entry_date);
+COMMENT ON TABLE price_entries IS 'staging:private';
 `;
 
 async function migrate(pool) {
@@ -94,6 +133,7 @@ async function seedDemo(pool) {
     await db.query('BEGIN');
     await db.query('DELETE FROM work_logs WHERE user_id = $1', [DEMO_USER]);
     await db.query('DELETE FROM advances WHERE user_id = $1', [DEMO_USER]);
+    await db.query('DELETE FROM products WHERE user_id = $1', [DEMO_USER]); // cascades
     await db.query('DELETE FROM clients WHERE user_id = $1', [DEMO_USER]);
     await db.query(
       `INSERT INTO profiles (user_id, name, occupation, location)
@@ -140,6 +180,36 @@ async function seedDemo(pool) {
          VALUES ($1, $2, CURRENT_DATE - $3::int, $4)`,
         [DEMO_USER, ids[client], ago, amount * 100]);
     }
+    // Demo items for the prices and profit screen. Amounts are whole units
+    // (×100 for cents). Iced tea's newest entry is dated today, so the demo
+    // always shows a cost rise this week and a dashboard alert.
+    const items = [
+      { name: 'Staging demo iced tea', goal: 25, batch: 30,
+        costs: [['Ingredients', 54000], ['Packaging', 12000]],
+        entries: [[8, 1500, 2500], [0, 2200, 2500]] },
+      { name: 'Staging demo fried banana', goal: 20, batch: 20,
+        costs: [['Ingredients', 30000], ['Packaging', 5000], ['Gas', 10000]],
+        entries: [[15, 2000, 3000], [3, 2250, 3000]] },
+      { name: 'Staging demo rice box', goal: 30, batch: 1,
+        costs: [['Ingredients', 7000], ['Packaging', 1500], ['Gas', 500]],
+        entries: [[12, 9000, 15000]] },
+    ];
+    for (const it of items) {
+      const r = await db.query(
+        `INSERT INTO products (user_id, name, target_margin_pct, batch_size)
+         VALUES ($1, $2, $3, $4) RETURNING id`, [DEMO_USER, it.name, it.goal, it.batch]);
+      const pid = r.rows[0].id;
+      for (let i = 0; i < it.costs.length; i++) {
+        await db.query(
+          `INSERT INTO product_costs (product_id, position, name, amount_cents)
+           VALUES ($1, $2, $3, $4)`, [pid, i, it.costs[i][0], it.costs[i][1] * 100]);
+      }
+      for (const [ago, cost, sell] of it.entries) {
+        await db.query(
+          `INSERT INTO price_entries (product_id, entry_date, unit_cost_cents, sell_price_cents)
+           VALUES ($1, CURRENT_DATE - $2::int, $3, $4)`, [pid, ago, cost * 100, sell * 100]);
+      }
+    }
     await db.query('COMMIT');
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
@@ -183,6 +253,86 @@ function settle(owedCents, advanceCents) {
     owedCents: Math.max(0, owedCents - advanceCents),
     advanceLeftCents: Math.max(0, advanceCents - owedCents),
   };
+}
+
+// ── Prices and profit maths ─────────────────────────────────────────────
+// One definition, used by every /api route and exported so the page's live
+// readout can keep a copy of the same rules. Profit % is taken on the
+// selling price: 300 profit on a 2,500 price is 12%.
+function suggestedPrice(costCents, pct) {
+  return Math.ceil((costCents * 100) / (100 - pct) / 100) * 100;
+}
+
+function priceFacts(costCents, sellCents, pct) {
+  const profitCents = sellCents - costCents;
+  return {
+    profitCents,
+    marginPct: Math.floor((profitCents * 100) / sellCents),
+    belowGoal: profitCents * 100 < pct * sellCents,
+    suggestedCents: suggestedPrice(costCents, pct),
+  };
+}
+
+// The Monday that starts the week a date falls in (weeks start on Monday,
+// like the rest of WageBook).
+function mondayOf(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
+// Every item's price facts at its latest entry on or before today, what its
+// cost was before this week started, and the entry just before the current
+// one (for the "costs went up" warning). One query; the maths happens here
+// in JS so lists, alerts and the item screen all read the same numbers.
+async function productSummaries(db, owner, today) {
+  const r = await db.query(
+    `SELECT p.id, p.name, p.target_margin_pct, p.batch_size,
+       cur.unit_cost_cents, cur.sell_price_cents,
+       to_char(cur.entry_date, 'YYYY-MM-DD') AS entry_date,
+       before_e.unit_cost_cents AS before_cost_cents,
+       prev_e.unit_cost_cents AS prev_cost_cents
+     FROM products p
+     LEFT JOIN LATERAL (
+       SELECT e.entry_date, e.unit_cost_cents, e.sell_price_cents
+       FROM price_entries e WHERE e.product_id = p.id AND e.entry_date <= $2::date
+       ORDER BY e.entry_date DESC LIMIT 1) cur ON true
+     LEFT JOIN LATERAL (
+       SELECT e.unit_cost_cents FROM price_entries e
+       WHERE e.product_id = p.id AND e.entry_date < date_trunc('week', $2::date)
+       ORDER BY e.entry_date DESC LIMIT 1) before_e ON true
+     LEFT JOIN LATERAL (
+       SELECT e.unit_cost_cents FROM price_entries e
+       WHERE e.product_id = p.id AND e.entry_date < cur.entry_date
+       ORDER BY e.entry_date DESC LIMIT 1) prev_e ON true
+     WHERE p.user_id = $1 AND cur.entry_date IS NOT NULL
+     ORDER BY p.updated_at DESC, p.id DESC`, [owner, today]);
+  const weekStart = mondayOf(today);
+  const list = r.rows.map((row) => {
+    const costCents = Number(row.unit_cost_cents);
+    const sellCents = Number(row.sell_price_cents);
+    const facts = priceFacts(costCents, sellCents, row.target_margin_pct);
+    return {
+      id: Number(row.id),
+      name: row.name,
+      goalPct: row.target_margin_pct,
+      batchSize: row.batch_size,
+      entryDate: row.entry_date,
+      costCents,
+      sellCents,
+      ...facts,
+      costRoseCents: row.prev_cost_cents == null
+        ? 0 : Math.max(0, costCents - Number(row.prev_cost_cents)),
+      weekCostChangeCents: row.entry_date >= weekStart && row.before_cost_cents != null
+        ? costCents - Number(row.before_cost_cents) : 0,
+    };
+  });
+  // Below-goal items first, keeping the most-recently-updated order inside
+  // each group (Array.sort is stable).
+  const products = list.slice().sort((a, b) => (b.belowGoal === a.belowGoal ? 0 : (b.belowGoal ? 1 : -1)));
+  const week = list.slice().sort((a, b) =>
+    (b.marginPct - a.marginPct) || (b.profitCents - a.profitCents));
+  return { products, week, weekStart };
 }
 
 async function upsertClient(db, userId, name) {
@@ -250,7 +400,8 @@ function createRouter(pool) {
     const today = todayFor(req);
     if (!owner) {
       return res.json({ today, monthCents: 0, weekCents: 0, monthDays: 0,
-        weeks: [], clients: [], recent: [], owedCents: 0, advanceLeftCents: 0 });
+        weeks: [], clients: [], recent: [], owedCents: 0, advanceLeftCents: 0,
+        priceAlerts: [] });
     }
     const totals = await pool.query(
       `SELECT
@@ -280,6 +431,8 @@ function createRouter(pool) {
          FROM advances a JOIN clients c ON c.id = a.client_id WHERE a.user_id = $1
        ) e ORDER BY date DESC, created_at DESC LIMIT 8`, [owner]);
     const clients = await clientBalances(pool, owner);
+    const sums = await productSummaries(pool, owner, today);
+    const priceAlerts = sums.products.filter((p) => p.belowGoal);
     const t = totals.rows[0];
     res.json({
       today,
@@ -290,6 +443,7 @@ function createRouter(pool) {
       clients,
       owedCents: clients.reduce((s, c) => s + c.owedCents, 0),
       advanceLeftCents: clients.reduce((s, c) => s + c.advanceLeftCents, 0),
+      priceAlerts,
       recent: recent.rows.map((e) => ({
         kind: e.kind, id: Number(e.id), date: e.date, client: e.client,
         workType: e.work_type, payBasis: e.pay_basis,
@@ -395,6 +549,172 @@ function createRouter(pool) {
     }
   });
 
+  // ── Prices and profit ───────────────────────────────────────────────────
+  // Items a person sells, what one batch costs them, and the price history.
+  // Ownership always goes through products.user_id: the cost and price rows
+  // carry no user_id of their own.
+
+  router.get('/api/products', async (req, res) => {
+    const owner = readOwner(req);
+    const today = todayFor(req);
+    if (!owner) {
+      return res.json({ today, weekStart: mondayOf(today), products: [], week: [] });
+    }
+    const sums = await productSummaries(pool, owner, today);
+    res.json({ today, weekStart: sums.weekStart, products: sums.products, week: sums.week });
+  });
+
+  router.get('/api/products/:id', async (req, res) => {
+    const owner = readOwner(req);
+    const id = Number(req.params.id);
+    if (!owner || !Number.isInteger(id)) {
+      return res.status(404).json({ error: 'That item is not in your book.' });
+    }
+    const today = todayFor(req);
+    const found = await pool.query(
+      'SELECT name, target_margin_pct, batch_size FROM products WHERE id = $1 AND user_id = $2',
+      [id, owner]);
+    const row = found.rows[0];
+    if (!row) return res.status(404).json({ error: 'That item is not in your book.' });
+    const sums = await productSummaries(pool, owner, today);
+    const cur = sums.products.find((p) => p.id === id) || null;
+    const costs = await pool.query(
+      'SELECT name, amount_cents FROM product_costs WHERE product_id = $1 ORDER BY position', [id]);
+    const history = await pool.query(
+      `SELECT to_char(entry_date, 'YYYY-MM-DD') AS date, unit_cost_cents, sell_price_cents
+       FROM price_entries WHERE product_id = $1 ORDER BY entry_date DESC, id DESC LIMIT 12`, [id]);
+    res.json({
+      product: {
+        id, name: row.name, goalPct: row.target_margin_pct, batchSize: row.batch_size,
+        costCents: cur ? cur.costCents : 0,
+        sellCents: cur ? cur.sellCents : 0,
+        profitCents: cur ? cur.profitCents : 0,
+        marginPct: cur ? cur.marginPct : 0,
+        suggestedCents: cur ? cur.suggestedCents : 0,
+        belowGoal: cur ? cur.belowGoal : false,
+        costRoseCents: cur ? cur.costRoseCents : 0,
+        costs: costs.rows.map((c) => ({ name: c.name, cents: Number(c.amount_cents) })),
+      },
+      history: history.rows.map((h) => ({
+        date: h.date,
+        costCents: Number(h.unit_cost_cents),
+        sellCents: Number(h.sell_price_cents),
+        ...priceFacts(Number(h.unit_cost_cents), Number(h.sell_price_cents), row.target_margin_pct),
+      })),
+    });
+  });
+
+  // One set of rules for reading a save's body, shared by POST and PUT.
+  function readProductBody(b) {
+    const name = cleanText(b.name, 80);
+    if (!name) return { error: "Add the item's name." };
+    const goal = Math.round(Number(b.goalPct));
+    if (!Number.isInteger(goal) || goal < 0 || goal > 90) {
+      return { error: 'Set a profit goal from 0 to 90%.' };
+    }
+    const batch = Math.round(Number(b.batchSize));
+    if (!Number.isInteger(batch) || batch < 1 || batch > 100000) {
+      return { error: 'Enter how many items these costs make.' };
+    }
+    if (!Array.isArray(b.costs) || b.costs.length < 1 || b.costs.length > 12) {
+      return { error: 'Enter at least one cost.' };
+    }
+    const costs = [];
+    for (const c of b.costs) {
+      const cName = cleanText(c && c.name, 40);
+      const amount = toCents(c && c.amount);
+      if (!cName) return { error: 'Name each cost, e.g. Gas.' };
+      if (amount == null) return { error: 'Enter each cost as a number.' };
+      costs.push({ name: cName, cents: amount });
+    }
+    if (!costs.some((c) => c.cents > 0)) return { error: 'Enter at least one cost.' };
+    const sell = toCents(b.sell);
+    if (sell == null || sell <= 0) return { error: 'Enter your selling price.' };
+    if (!DATE_RE.test(b.date || '') || Number.isNaN(Date.parse(b.date))) {
+      return { error: 'Pick the day for these prices.' };
+    }
+    return { name, goal, batch, costs, sell, date: b.date };
+  }
+
+  function duplicateName(err, name, res) {
+    if (err && err.code === '23505') {
+      res.status(400).json({ error: 'You already have an item called ' + name + '.' });
+      return true;
+    }
+    return false;
+  }
+
+  router.post('/api/products', async (req, res) => {
+    const body = readProductBody(req.body || {});
+    if (body.error) return res.status(400).json({ error: body.error });
+    const unitCost = Math.round(body.costs.reduce((s, c) => s + c.cents, 0) / body.batch);
+    const userId = String(req.user.id);
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      const r = await db.query(
+        `INSERT INTO products (user_id, name, target_margin_pct, batch_size)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [userId, body.name, body.goal, body.batch]);
+      const pid = r.rows[0].id;
+      for (let i = 0; i < body.costs.length; i++) {
+        await db.query(
+          `INSERT INTO product_costs (product_id, position, name, amount_cents)
+           VALUES ($1, $2, $3, $4)`, [pid, i, body.costs[i].name, body.costs[i].cents]);
+      }
+      await db.query(
+        `INSERT INTO price_entries (product_id, entry_date, unit_cost_cents, sell_price_cents)
+         VALUES ($1, $2, $3, $4)`, [pid, body.date, unitCost, body.sell]);
+      await db.query('COMMIT');
+      res.status(201).json({ id: Number(pid) });
+    } catch (err) {
+      await db.query('ROLLBACK').catch(() => {});
+      if (duplicateName(err, body.name, res)) return;
+      throw err;
+    } finally {
+      db.release();
+    }
+  });
+
+  router.put('/api/products/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(404).json({ error: 'That item is not in your book.' });
+    const owned = await pool.query(
+      'SELECT id FROM products WHERE id = $1 AND user_id = $2', [id, String(req.user.id)]);
+    if (!owned.rows[0]) return res.status(404).json({ error: 'That item is not in your book.' });
+    const body = readProductBody(req.body || {});
+    if (body.error) return res.status(400).json({ error: body.error });
+    const unitCost = Math.round(body.costs.reduce((s, c) => s + c.cents, 0) / body.batch);
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      await db.query(
+        `UPDATE products SET name = $1, target_margin_pct = $2, batch_size = $3, updated_at = NOW()
+         WHERE id = $4`, [body.name, body.goal, body.batch, id]);
+      await db.query('DELETE FROM product_costs WHERE product_id = $1', [id]);
+      for (let i = 0; i < body.costs.length; i++) {
+        await db.query(
+          `INSERT INTO product_costs (product_id, position, name, amount_cents)
+           VALUES ($1, $2, $3, $4)`, [id, i, body.costs[i].name, body.costs[i].cents]);
+      }
+      // A second save on the same day replaces that day's entry.
+      await db.query(
+        `INSERT INTO price_entries (product_id, entry_date, unit_cost_cents, sell_price_cents)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (product_id, entry_date) DO UPDATE
+         SET unit_cost_cents = EXCLUDED.unit_cost_cents,
+             sell_price_cents = EXCLUDED.sell_price_cents`, [id, body.date, unitCost, body.sell]);
+      await db.query('COMMIT');
+      res.json({ id });
+    } catch (err) {
+      await db.query('ROLLBACK').catch(() => {});
+      if (duplicateName(err, body.name, res)) return;
+      throw err;
+    } finally {
+      db.release();
+    }
+  });
+
   // Express 4 does not catch rejected promises from async handlers.
   for (const layer of router.stack) {
     for (const l of layer.route.stack) {
@@ -410,4 +730,4 @@ function createRouter(pool) {
   return router;
 }
 
-module.exports = { migrate, createRouter, settle, OCCUPATIONS };
+module.exports = { migrate, createRouter, settle, suggestedPrice, priceFacts, OCCUPATIONS };

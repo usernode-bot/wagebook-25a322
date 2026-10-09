@@ -146,6 +146,13 @@ Re-theme by changing the token values there, keeping every text pair at
 - Advance balances are derived, never stored: per client,
   `owed = max(0, unpaid - advances)` and
   `advance left = max(0, advances - unpaid)` (`settle()` in `wagebook.js`).
+- The Prices and profit tables (`products`, `product_costs`,
+  `price_entries`) are `staging:private` too. The suggested price is
+  `cost ÷ (1 − profit goal)`, rounded up to a whole unit
+  (`suggestedPrice()` in `wagebook.js`); profit % is taken on the selling
+  price, never the cost.
+- On the Prices and profit screens, say "item" (never "product") and
+  "profit goal" (never "margin").
 - All four tables (`profiles`, `clients`, `work_logs`, `advances`) are
   `staging:private`. The staging seed belongs to the fake owner
   `staging-demo-user` and is shown only for reads behind `?demo=1`; saves

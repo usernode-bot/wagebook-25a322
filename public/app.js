@@ -1,8 +1,11 @@
-// WageBook: the page. Four screens, routed by path:
-//   /          the dashboard
-//   /log       "Log today's work", three steps
-//   /advance   "Take an advance"
-//   /profile   your name, photo, work and town
+// WageBook: the page. Seven screens, routed by path:
+//   /            the dashboard
+//   /log         "Log today's work", three steps
+//   /advance     "Take an advance"
+//   /profile     your name, photo, work and town
+//   /prices      "Prices and profit", your items and this week's ranking
+//   /prices/new  add an item
+//   /prices/:id  one item: costs, suggested price, price history
 // Class names are written as whole literals so the Tailwind build sees them.
 (function () {
   'use strict';
@@ -32,6 +35,25 @@
   function money(cents) { return numFmt.format((cents || 0) / 100); }
   function num(v) { var n = parseFloat(String(v).replace(/,/g, '')); return isFinite(n) ? n : NaN; }
 
+  // The price maths, a copy of the server's rules in wagebook.js: the
+  // suggested price is cost ÷ (1 − goal), rounded up to a whole unit, and
+  // profit % is taken on the selling price.
+  function suggestedPrice(cost, pct) {
+    return Math.ceil((cost * 100) / (100 - pct) / 100) * 100;
+  }
+  function priceFacts(cost, sell, pct) {
+    var profit = sell - cost;
+    return {
+      profitCents: profit,
+      marginPct: Math.floor((profit * 100) / sell),
+      belowGoal: profit * 100 < pct * sell,
+      suggestedCents: suggestedPrice(cost, pct),
+    };
+  }
+  function profitWords(cents) {
+    return cents < 0 ? 'You lose ' + money(-cents) : 'You make ' + money(cents);
+  }
+
   function api(path, opts) {
     opts = opts || {};
     var headers = { 'content-type': 'application/json' };
@@ -55,10 +77,10 @@
 
   // A save always lands in the person's own book, so leave the read-only
   // demo view and show it.
-  function saved(msg) {
+  function saved(msg, path) {
     demo = false;
     toast(msg);
-    go('/');
+    go(path || '/');
   }
 
   function toast(msg) {
@@ -75,6 +97,9 @@
     user: '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
     back: '<path d="m15 18-6-6 6-6"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    tag: '<path d="M12 2H2v10l9.3 9.3a1 1 0 0 0 1.4 0l8.6-8.6a1 1 0 0 0 0-1.4z"/><circle cx="7" cy="7" r="1.5"/>',
+    alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+    x: '<path d="M18 6 6 18M6 6l12 12"/>',
   };
   function icon(name, cls) {
     return '<svg class="' + (cls || 'h-6 w-6') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
@@ -105,6 +130,10 @@
     if (p === '/log') return renderLog();
     if (p === '/advance') return renderAdvance();
     if (p === '/profile') return renderProfile();
+    if (p === '/prices') return renderPrices();
+    if (p === '/prices/new') return renderItem(null);
+    var pm = p.match(/^\/prices\/(\d+)$/);
+    if (pm) return renderItem(Number(pm[1]));
     return renderDashboard();
   }
 
@@ -114,14 +143,16 @@
       : '';
   }
 
-  function backBar(title, label) {
+  function backBar(title, label, target) {
+    var t = target || '/';
+    var where = t === '/prices' ? 'prices' : 'dashboard';
     return '<header class="flex items-center gap-2">' +
-      '<a href="' + href('/') + '" data-nav="/" class="btn-secondary px-3" aria-label="' + (label ? 'Cancel and go back to the dashboard' : 'Back to dashboard') + '">' + icon('back', 'h-5 w-5') + '<span>' + (label || 'Back') + '</span></a>' +
+      '<a href="' + href(t) + '" data-nav="' + t + '" class="btn-secondary px-3" aria-label="' + (label ? 'Cancel and go back to the ' + where : 'Back to ' + where) + '">' + icon('back', 'h-5 w-5') + '<span>' + (label || 'Back') + '</span></a>' +
       '<h1 class="text-heading">' + esc(title) + '</h1></header>';
   }
 
-  function errorState(msg, retry) {
-    app.innerHTML = '<div class="state-error card"><p class="text-heading">Could not load your wage book</p>' +
+  function errorState(msg, retry, title) {
+    app.innerHTML = '<div class="state-error card"><p class="text-heading">' + esc(title || 'Could not load your wage book') + '</p>' +
       '<p class="text-body text-muted">' + esc(msg) + ' Nothing you saved is lost.</p>' +
       '<button type="button" class="btn-primary mt-2" id="retry">Retry</button></div>';
     document.getElementById('retry').onclick = retry;
@@ -155,7 +186,24 @@
       '<div class="flex flex-col gap-3">' +
         '<a href="' + href('/log') + '" data-nav="/log" class="btn-primary min-h-16 text-heading" id="log-work">' + icon('plus', 'h-7 w-7') + 'Log today\'s work</a>' +
         '<a href="' + href('/advance') + '" data-nav="/advance" class="btn-secondary min-h-14 text-heading" id="take-advance">' + icon('banknote', 'h-6 w-6') + 'Take an advance</a>' +
+        '<a href="' + href('/prices') + '" data-nav="/prices" class="btn-secondary min-h-14 text-heading" id="open-prices">' + icon('tag', 'h-6 w-6') + 'Prices and profit</a>' +
       '</div>';
+
+    // An item selling below its profit goal, shown even on an empty wage
+    // book: a vendor who never logs a work day still prices goods.
+    var alerts = d.priceAlerts || [];
+    if (alerts.length) {
+      html += '<section id="price-alerts"><h2 class="section-label">Prices to check</h2><ul class="list">' +
+        alerts.map(function (a) {
+          var lead = a.costRoseCents > 0 ? 'Costs went up. ' : '';
+          return '<li><a class="list-row justify-between" href="' + href('/prices/' + a.id) + '" data-nav="/prices/' + a.id + '">' +
+            '<span class="shrink-0 text-danger">' + icon('alert') + '</span>' +
+            '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">' + esc(a.name) + '</p>' +
+            '<p class="text-small text-muted">' + lead + 'Profit is ' + a.marginPct + '%, your goal is ' + a.goalPct + '%.</p></div>' +
+            '<div class="shrink-0 text-right"><p class="text-small text-muted">Suggested price</p>' +
+            '<p class="text-body font-semibold tabular-nums">' + money(a.suggestedCents) + '</p></div></a></li>';
+        }).join('') + '</ul></section>';
+    }
 
     if (!hasData) {
       html += '<section class="state-empty card" id="empty-book">' +
@@ -605,6 +653,273 @@
         .then(function () { saved('Advance saved'); })
         .catch(function (err) { btn.disabled = false; formError(err.message); });
     });
+  }
+
+  // ── Prices and profit ────────────────────────────────────────────────────
+  function pricesSkeleton() {
+    return '<div class="flex flex-col gap-4" aria-busy="true">' +
+      '<div class="skeleton h-11 w-48"></div><div class="skeleton h-14 w-full"></div>' +
+      '<div class="skeleton h-40 w-full"></div><div class="skeleton h-40 w-full"></div></div>';
+  }
+
+  function renderPrices() {
+    app.innerHTML = pricesSkeleton();
+    Promise.all([me ? Promise.resolve(me) : loadMe(), api('/api/products?today=' + today())])
+      .then(function (r) { drawPrices(r[1]); })
+      .catch(function (err) { errorState(err.message, renderPrices, 'Could not load your prices'); });
+  }
+
+  function drawPrices(d) {
+    var items = d.products || [];
+    var html = backBar('Prices and profit') + demoNote() +
+      '<a href="' + href('/prices/new') + '" data-nav="/prices/new" class="btn-primary min-h-14 text-heading" id="add-item">' +
+      icon('plus', 'h-6 w-6') + 'Add an item</a>';
+    if (!items.length) {
+      html += '<section class="state-empty card" id="empty-prices">' +
+        '<p class="text-heading">No items yet</p>' +
+        '<p class="text-body text-muted">Add an item you sell and what it costs you. WageBook suggests a price and shows your profit.</p></section>';
+      app.innerHTML = html;
+      return;
+    }
+    html += '<section><h2 class="section-label">Your items</h2><ul class="list" id="price-items">' +
+      items.map(function (p) {
+        var sub = p.belowGoal
+          ? '<p class="text-small text-danger">Below your ' + p.goalPct + '% profit goal. Suggested price ' + money(p.suggestedCents) + '</p>'
+          : '<p class="text-small text-muted">Profit goal ' + p.goalPct + '%, now ' + p.marginPct + '%</p>';
+        var prof = p.profitCents < 0
+          ? 'You lose ' + money(-p.profitCents) + ' per item'
+          : 'Profit ' + money(p.profitCents);
+        return '<li><a class="list-row justify-between" href="' + href('/prices/' + p.id) + '" data-nav="/prices/' + p.id + '">' +
+          '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">' + esc(p.name) + '</p>' + sub + '</div>' +
+          '<div class="shrink-0 text-right"><p class="text-body font-semibold tabular-nums">' + money(p.sellCents) + '</p>' +
+          '<p class="text-small text-muted tabular-nums">' + prof + '</p></div></a></li>';
+      }).join('') + '</ul></section>';
+    // With one item there is nothing to rank.
+    if (items.length >= 2) html += weekSummary(d.week);
+    app.innerHTML = html;
+  }
+
+  function weekSummary(week) {
+    return '<section id="week-summary"><h2 class="section-label">This week, most profitable first</h2><ul class="list">' +
+      week.map(function (w, i) {
+        var lines = '';
+        if (i === 0) lines += '<p class="text-small font-semibold">Most profitable</p>';
+        else if (i === week.length - 1) lines += '<p class="text-small font-semibold">Least profitable</p>';
+        if (w.weekCostChangeCents > 0) {
+          lines += '<p class="text-small text-accent">Cost up ' + money(w.weekCostChangeCents) + ' since Monday</p>';
+        }
+        var per = w.profitCents < 0
+          ? 'You lose ' + money(-w.profitCents) + ' per item'
+          : money(w.profitCents) + ' per item';
+        return '<li class="list-row justify-between"><div class="min-w-0 flex-1">' +
+          '<p class="truncate text-body font-medium">' + esc(w.name) + '</p>' + lines + '</div>' +
+          '<div class="shrink-0 text-right"><p class="text-body font-semibold tabular-nums' + (w.belowGoal ? ' text-danger' : '') + '">' + w.marginPct + '%</p>' +
+          '<p class="text-small text-muted tabular-nums">' + per + '</p></div></li>';
+      }).join('') + '</ul></section>';
+  }
+
+  function renderItem(id) {
+    var existing = id != null;
+    app.innerHTML = pricesSkeleton();
+    var load = existing
+      ? Promise.all([me ? Promise.resolve(me) : loadMe(), api('/api/products/' + id + '?today=' + today())])
+      : (me ? Promise.resolve(me) : loadMe()).then(function (m) { return [m, null]; });
+    load.then(function (r) { drawItem(r[0], r[1], existing); }).catch(function (err) {
+      if (err.status === 404) {
+        app.innerHTML = '<div class="state-error card"><p class="text-heading">That item is not in your book</p>' +
+          '<p class="text-body text-muted">It may belong to someone else, or the link is old.</p>' +
+          '<a href="' + href('/prices') + '" data-nav="/prices" class="btn-primary mt-2">Back to prices</a></div>';
+        return;
+      }
+      errorState(err.message, function () { renderItem(id); }, 'Could not load your prices');
+    });
+  }
+
+  function priceHistory(history) {
+    if (!history || !history.length) return '';
+    return '<section id="price-history"><h2 class="section-label">Price history</h2><ul class="list">' +
+      history.map(function (h) {
+        var prof = h.profitCents < 0
+          ? 'You lose ' + money(-h.profitCents) + ' per item'
+          : 'Profit ' + money(h.profitCents) + ' per item';
+        return '<li class="list-row">' + stamp(h.date) +
+          '<div class="min-w-0 flex-1"><p class="text-body font-medium tabular-nums">Cost ' + money(h.costCents) + ', sold at ' + money(h.sellCents) + '</p>' +
+          '<p class="text-small text-muted tabular-nums">' + prof + '</p></div>' +
+          '<p class="shrink-0 text-body font-semibold tabular-nums' + (h.belowGoal ? ' text-danger' : '') + '">' + h.marginPct + '%</p></li>';
+      }).join('') + '</ul></section>';
+  }
+
+  function drawItem(m, data, existing) {
+    var p = existing ? data.product : null;
+    var s = {
+      costs: p ? p.costs.map(function (c) { return { name: c.name, amount: String(c.cents / 100) }; })
+              : [{ name: 'Ingredients', amount: '' }, { name: 'Packaging', amount: '' }, { name: 'Gas', amount: '' }],
+      batchSize: p ? String(p.batchSize) : '1',
+      goal: p ? String(p.goalPct) : '20',
+      sell: p ? String(p.sellCents / 100) : '',
+      // A new item takes the suggestion until the person types their own
+      // price; an existing one keeps its saved price.
+      sellTouched: !!p,
+      suggested: 0,
+    };
+
+    var warn = '';
+    if (p && p.belowGoal) {
+      var rise = p.costRoseCents > 0
+        ? 'Your costs went up from ' + money(p.costCents - p.costRoseCents) + ' to ' + money(p.costCents) + ' per item. '
+        : '';
+      warn = '<div class="rounded-lg border border-danger px-3 py-3 text-body" id="item-warning" role="alert">' +
+        '<p class="font-semibold text-danger">Below your profit goal</p>' +
+        '<p>' + rise + 'At your price of <strong class="tabular-nums">' + money(p.sellCents) + '</strong> ' +
+        profitWords(p.profitCents).toLowerCase() + ' per item (' + p.marginPct + '%). Your goal is ' + p.goalPct + '%.</p></div>';
+    }
+
+    app.innerHTML = backBar(p ? p.name : 'Add an item', null, '/prices') + demoNote() + warn +
+      '<form id="item-form" class="flex flex-col gap-5" novalidate>' +
+      '<div class="flex flex-col gap-2"><label for="item-name" class="text-body font-medium">Item name</label>' +
+      '<input id="item-name" class="field" maxlength="80" value="' + esc(p ? p.name : '') + '" placeholder="e.g. Iced tea"></div>' +
+      '<fieldset class="flex flex-col gap-2"><legend class="mb-2 text-body font-medium">Costs</legend>' +
+      '<p class="text-small text-muted">What you paid for one batch.</p>' +
+      '<div class="flex gap-2 px-1 text-small text-muted"><span class="min-w-0 flex-1">Cost</span>' +
+      '<span class="w-28 shrink-0">You paid</span><span class="w-11 shrink-0"></span></div>' +
+      '<div id="cost-rows" class="flex flex-col gap-2"></div>' +
+      '<button type="button" class="btn-secondary" id="add-cost">' + icon('plus', 'h-5 w-5') + 'Add another cost</button></fieldset>' +
+      '<div class="grid grid-cols-2 gap-3">' +
+      '<div class="flex flex-col gap-2"><label for="batch-size" class="text-body font-medium">Items it makes</label>' +
+      '<input id="batch-size" class="field tabular-nums" inputmode="numeric" value="' + esc(s.batchSize) + '"></div>' +
+      '<div class="flex flex-col gap-2"><label for="goal" class="text-body font-medium">Profit goal (%)</label>' +
+      '<input id="goal" class="field tabular-nums" inputmode="numeric" value="' + esc(s.goal) + '"></div></div>' +
+      '<p class="text-small text-muted" id="cost-per"></p>' +
+      '<div class="rounded-lg bg-raised px-3 py-3" id="price-result"></div>' +
+      '<div class="flex flex-col gap-2"><label for="sell" class="text-body font-medium">Your selling price</label>' +
+      '<div class="grid grid-cols-2 gap-2">' +
+      '<input id="sell" class="field text-heading tabular-nums" inputmode="decimal" value="' + esc(s.sell) + '">' +
+      '<button type="button" class="btn-secondary" id="use-suggested">Use</button></div>' +
+      '<p class="text-small text-muted" id="live-readout"></p></div>' +
+      errorBox +
+      '<button type="submit" class="btn-primary min-h-14 text-heading" id="save-item">' +
+      (existing ? 'Save new prices' : 'Save item') + '</button></form>' +
+      (existing ? priceHistory(data.history) : '');
+
+    var useBtn = document.getElementById('use-suggested');
+
+    function drawCostRows() {
+      var box = document.getElementById('cost-rows');
+      box.innerHTML = s.costs.map(function (c, i) {
+        return '<div class="flex items-center gap-2">' +
+          '<input class="field min-w-0 flex-1" maxlength="40" value="' + esc(c.name) + '" data-cost-name="' + i + '" aria-label="Cost name">' +
+          '<input class="field w-28 shrink-0 tabular-nums" inputmode="decimal" value="' + esc(c.amount) + '" data-cost-amount="' + i + '" aria-label="You paid" placeholder="e.g. 54000">' +
+          '<button type="button" class="btn-secondary shrink-0 px-0' + (s.costs.length === 1 ? ' hidden' : '') + '" data-remove="' + i + '" aria-label="Remove ' + esc(c.name) + '">' + icon('x', 'h-5 w-5') + '</button></div>';
+      }).join('');
+    }
+    drawCostRows();
+
+    var rows = document.getElementById('cost-rows');
+    rows.addEventListener('input', function (e) {
+      var t = e.target, i = Number(t.getAttribute('data-cost-name') || t.getAttribute('data-cost-amount'));
+      if (t.getAttribute('data-cost-name') != null) s.costs[i].name = t.value;
+      else if (t.getAttribute('data-cost-amount') != null) s.costs[i].amount = t.value;
+      if (!Number.isNaN(i)) recalc();
+    });
+    rows.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-remove]');
+      if (!b) return;
+      s.costs.splice(Number(b.getAttribute('data-remove')), 1);
+      drawCostRows();
+      recalc();
+    });
+    document.getElementById('add-cost').addEventListener('click', function () {
+      if (s.costs.length >= 12) return;
+      s.costs.push({ name: '', amount: '' });
+      drawCostRows();
+      var last = rows.querySelector('[data-cost-name="' + (s.costs.length - 1) + '"]');
+      if (last) last.focus();
+    });
+
+    function recalc() {
+      s.batchSize = document.getElementById('batch-size').value;
+      s.goal = document.getElementById('goal').value;
+      var batch = Math.round(num(s.batchSize));
+      var goal = Math.round(num(s.goal));
+      var sum = 0;
+      s.costs.forEach(function (c) {
+        var v = num(c.amount);
+        if (v > 0) sum += Math.round(v * 100);
+      });
+      var costPer = batch >= 1 && sum > 0 ? Math.round(sum / batch) : 0;
+      var goalOk = goal >= 0 && goal <= 90;
+      s.suggested = costPer > 0 && goalOk ? suggestedPrice(costPer, goal) : 0;
+      document.getElementById('cost-per').innerHTML = costPer > 0
+        ? 'Cost per item: <strong class="text-fg tabular-nums">' + money(costPer) + '</strong>' : '';
+      var result = document.getElementById('price-result');
+      if (s.suggested > 0) {
+        result.innerHTML = '<p class="text-small font-medium text-muted">Suggested price</p>' +
+          '<p class="text-title tabular-nums">' + money(s.suggested) + '</p>' +
+          '<p class="text-small text-muted">Profit per item at that price: ' + money(s.suggested - costPer) + ' (' + goal + '%)</p>';
+        useBtn.textContent = 'Use ' + money(s.suggested);
+        useBtn.disabled = false;
+        if (!s.sellTouched) {
+          s.sell = String(s.suggested / 100);
+          document.getElementById('sell').value = s.sell;
+        }
+      } else {
+        result.innerHTML = '<p class="text-small text-muted">Enter your costs to see it.</p>';
+        useBtn.textContent = 'Use';
+        useBtn.disabled = true;
+      }
+      var readout = document.getElementById('live-readout');
+      var sellC = Math.round(num(s.sell) * 100);
+      if (sellC > 0 && costPer > 0 && goalOk) {
+        var f = priceFacts(costPer, sellC, goal);
+        readout.textContent = 'At ' + money(sellC) + ' ' + profitWords(f.profitCents).toLowerCase() +
+          ' per item (' + f.marginPct + '%)' + (f.belowGoal ? ', below your goal.' : '.');
+        readout.className = f.belowGoal ? 'text-small text-danger' : 'text-small text-muted';
+      } else {
+        readout.textContent = '';
+        readout.className = 'text-small text-muted';
+      }
+    }
+    ['batch-size', 'goal', 'sell'].forEach(function (id) {
+      document.getElementById(id).addEventListener('input', function (e) {
+        if (id === 'sell') { s.sell = e.target.value; s.sellTouched = true; }
+        recalc();
+      });
+    });
+    useBtn.addEventListener('click', function () {
+      if (!s.suggested) return;
+      s.sellTouched = true;
+      s.sell = String(s.suggested / 100);
+      document.getElementById('sell').value = s.sell;
+      recalc();
+    });
+
+    document.getElementById('item-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var btn = document.getElementById('save-item');
+      btn.disabled = true;
+      var body = {
+        name: document.getElementById('item-name').value,
+        goalPct: Math.round(num(s.goal)),
+        batchSize: Math.round(num(s.batchSize)),
+        costs: s.costs.map(function (c) { return { name: c.name, amount: num(c.amount) }; }),
+        sell: num(s.sell),
+        date: today(),
+      };
+      // A demo save copies the item into the person's own book, so it is
+      // always a POST; a saved item of their own is an update.
+      var put = existing && !(m && m.demo);
+      var req = put
+        ? api('/api/products/' + p.id, { method: 'PUT', body: body })
+        : api('/api/products', { method: 'POST', body: body });
+      req.then(function () {
+        saved(put ? 'Prices saved' : 'Item saved', '/prices');
+      }).catch(function (err) {
+        btn.disabled = false;
+        formError(err.message);
+      });
+    });
+
+    recalc();
   }
 
   // ── Profile ──────────────────────────────────────────────────────────────

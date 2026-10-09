@@ -14,6 +14,8 @@ workers, carpenters, welders, drivers, domestic helpers and freelancers.
   an optional proof photo). Clients you use are saved, and picking one
   fills in what you logged for them last time.
 - **Take an advance** (`/advance`): the day, the client and the amount.
+- **Prices and profit** (`/prices`): for vendors and food sellers, what
+  each item they sell really costs and what to sell it for.
 - **Profile** (`/profile`): name, photo, type of work and town.
 
 ### How advances work
@@ -25,11 +27,32 @@ you; if advances are larger, the difference is the advance balance you
 still have to work off. Nothing is rewritten when you take an advance: the
 balance is always worked out from the entries.
 
+### How prices and profit work
+
+Save an item with what you paid for one batch (cost rows with any names —
+ingredients, packaging, gas are only the starting rows) and how many items
+that batch makes. WageBook works out the cost per item and suggests a
+selling price that reaches your profit goal (cost ÷ (1 − goal), rounded up
+to a whole unit). Enter the price you actually sell at and the screen shows
+your profit per item as you type; profit % is taken on the selling price.
+
+When you buy ingredients again at a higher price, open the item, change
+the amounts and tap "Save new prices". Each save is dated and kept in the
+item's price history (one entry per day). When an item's profit at your
+price falls below its goal, the item, the Prices and profit list and the
+dashboard ("Prices to check") warn you in plain words, with the price to
+sell at. The dashboard also ranks this week's items from most to least
+profitable on the Prices and profit screen ("This week"), and notes whose
+costs went up since Monday. Weeks start on Monday and follow your phone's
+date. Nothing is sent to your phone: the warnings live inside WageBook.
+
 ## How it is built
 
 - `server.js`: Express server, Homeroom sign-in, graceful shutdown.
 - `wagebook.js`: the Postgres schema (`profiles`, `clients`, `work_logs`,
-  `advances`, all private), the staging demo seed and the `/api` routes.
+  `advances`, plus `products`, `product_costs` and `price_entries` for
+  prices and profit — all private), the staging demo seed and the `/api`
+  routes.
 - `public/app.js`: the page (vanilla JS, routed by path).
 - `styles/tailwind-input.css` and `tailwind.config.js`: the colour tokens
   and components, compiled by `npm run build` during the image build.
