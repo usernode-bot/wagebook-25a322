@@ -14,6 +14,18 @@ workers, carpenters, welders, drivers, domestic helpers and freelancers.
   an optional proof photo). Clients you use are saved, and picking one
   fills in what you logged for them last time.
 - **Take an advance** (`/advance`): the day, the client and the amount.
+- **Prices and profit** (`/prices`): for market vendors and food sellers.
+  Save each item you sell with what one batch costs you (ingredients,
+  packaging, gas — the cost names are free text) and how many items the
+  batch makes. Set a profit goal (a whole percent, 0–90) and WageBook
+  suggests a price: cost per item divided by (1 minus the goal), rounded
+  up to a whole number. Enter the price you actually sell at and it shows
+  your profit per item as you type. Each save is dated and kept in the
+  item's price history; when a new purchase price pushes an item's profit
+  below its goal, the item, the list and the dashboard ("Prices to check")
+  say so in plain words. Below your items, "This week" ranks them from
+  most to least profitable (by profit % at today's prices) and notes cost
+  rises since Monday. Items cannot be deleted in this version.
 - **Profile** (`/profile`): name, photo, type of work and town.
 
 ### How advances work
@@ -29,7 +41,8 @@ balance is always worked out from the entries.
 
 - `server.js`: Express server, Homeroom sign-in, graceful shutdown.
 - `wagebook.js`: the Postgres schema (`profiles`, `clients`, `work_logs`,
-  `advances`, all private), the staging demo seed and the `/api` routes.
+  `advances`, `products`, `product_costs`, `price_entries`, all private),
+  the staging demo seed and the `/api` routes.
 - `public/app.js`: the page (vanilla JS, routed by path).
 - `styles/tailwind-input.css` and `tailwind.config.js`: the colour tokens
   and components, compiled by `npm run build` during the image build.

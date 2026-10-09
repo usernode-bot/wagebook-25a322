@@ -38,6 +38,32 @@
       "path": "/profile",
       "expectSelector": "#occupation",
       "expectText": "Your work"
+    },
+    {
+      "name": "Dashboard warns about items below their profit goal (demo data)",
+      "path": "/?demo=1",
+      "expectSelector": "#price-alerts",
+      "expectText": "Prices to check"
+    },
+    {
+      "name": "Prices and profit lists items and this week's ranking (demo data)",
+      "path": "/prices?demo=1",
+      "expectSelector": "#week-summary",
+      "expectText": "Least profitable",
+      "visual": true,
+      "impact": ["public/app.js", "wagebook.js", "styles/**"]
+    },
+    {
+      "name": "Prices and profit with no items offers to add one",
+      "path": "/prices",
+      "expectSelector": "#empty-prices",
+      "expectText": "No items yet"
+    },
+    {
+      "name": "Add an item shows costs and a suggested price",
+      "path": "/prices/new",
+      "expectSelector": "#cost-rows",
+      "expectText": "Suggested price"
     }
   ]
 }
