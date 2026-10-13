@@ -65,5 +65,9 @@
       "expectSelector": "#cost-rows",
       "expectText": "Suggested price"
     }
-  ]
+  ],
+  "icon": {
+    "image": "brand/icon.png",
+    "emoji": "📒"
+  }
 }
