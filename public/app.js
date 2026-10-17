@@ -163,7 +163,7 @@
         '<div><h1 class="text-title">WageBook</h1>' +
         (name ? '<p class="text-body text-muted">' + esc(name) + '</p>' : '') + '</div>' +
         '<a href="' + href('/profile') + '" data-nav="/profile" class="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus" aria-label="Your profile">' + avatar + '</a>' +
-      '</header>' + demoNote() +
+      '</header>' + demoNote() + (hasData ? balanceCard(d) : '') +
       '<div class="flex flex-col gap-3">' +
         '<a href="' + href('/log') + '" data-nav="/log" class="btn-primary min-h-16 text-heading" id="log-work">' + icon('plus', 'h-7 w-7') + 'Log today\'s work</a>' +
         '<a href="' + href('/advance') + '" data-nav="/advance" class="btn-secondary min-h-14 text-heading" id="take-advance">' + icon('banknote', 'h-6 w-6') + 'Take an advance</a>' +
@@ -221,6 +221,24 @@
 
     app.innerHTML = html;
     wireChart(d.weeks);
+  }
+
+  // Balance summary: the three numbers people check most, above the buttons.
+  function balanceCard(d) {
+    var unpaid = d.clients.reduce(function (s, c) { return s + c.unpaidCents; }, 0);
+    return '<section class="card" id="balance" aria-label="Balance summary">' +
+      '<dl class="divide-y divide-line">' +
+        '<div class="flex items-baseline justify-between gap-3 pb-2">' +
+          '<dt class="text-body text-muted">Total earned</dt>' +
+          '<dd class="text-heading tabular-nums">' + money(d.totalCents) + '</dd></div>' +
+        '<div class="flex items-baseline justify-between gap-3 py-2">' +
+          '<dt class="text-body text-muted">Unpaid wages</dt>' +
+          '<dd class="text-heading tabular-nums">' + money(unpaid) + '</dd></div>' +
+        '<div class="flex items-baseline justify-between gap-3 pt-2">' +
+          '<dt class="text-body font-medium">Left after advances</dt>' +
+          '<dd class="text-title tabular-nums">' + money(d.owedCents) + '</dd></div>' +
+      '</dl>' +
+      '<p class="text-small text-muted">What clients still owe you after advances</p></section>';
   }
 
   function tile(ic, label, cents, sub) {
