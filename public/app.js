@@ -134,10 +134,12 @@
       '<h1 class="text-heading">' + esc(title) + '</h1></header>';
   }
 
+  // The server's own error text is never shown here: on a 500 it can be a raw
+  // status message ("Internal Server Error"). A fixed sentence under the heading.
   function errorState(msg, retry, title) {
     app.innerHTML = '<div class="state-error card"><p class="text-heading">' + esc(title || 'Could not load your wage book') + '</p>' +
-      '<p class="text-body text-muted">' + esc(msg) + ' Nothing you saved is lost.</p>' +
-      '<button type="button" class="btn-primary mt-2" id="retry">Retry</button></div>';
+      '<p class="text-body text-muted mt-1">Something went wrong on our side. Nothing you saved is lost.</p>' +
+      '<button type="button" class="btn-primary min-h-14 text-heading mt-2 w-full" id="retry">Try again</button></div>';
     document.getElementById('retry').onclick = retry;
   }
 
