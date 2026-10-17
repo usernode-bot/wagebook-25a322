@@ -272,6 +272,21 @@ function priceFacts(costCents, sellCents, pct) {
   };
 }
 
+// Splits an advance cover across open work logs, oldest first: each log's
+// paid_cents rises to total minus whatever is still left uncovered. `logs`
+// are { id, totalCents, paidCents } in the order they were worked. Returns
+// [{ id, paidCents }] — one entry per log, cash included (a log the cover
+// does not reach at all is paid in full).
+function coverWithAdvance(logs, coverCents) {
+  let left = coverCents;
+  return logs.map((log) => {
+    const open = Math.max(0, log.totalCents - log.paidCents);
+    const keep = Math.min(open, left);
+    left -= keep;
+    return { id: log.id, paidCents: log.totalCents - keep };
+  });
+}
+
 // Monday of the week a plain YYYY-MM-DD date falls in.
 function mondayOf(dateStr) {
   const d = new Date(dateStr + 'T00:00:00Z');
@@ -341,20 +356,84 @@ async function upsertClient(db, userId, name) {
 }
 
 async function clientBalances(db, owner) {
+  // A day an earlier "Mark as paid" settled with advance money is `paid`
+  // with paid_cents < total_cents: that gap is advance used, so it counts
+  // against the advances, not as unpaid. Days still open count as unpaid.
   const r = await db.query(
     `SELECT c.id, c.name,
        COALESCE((SELECT SUM(total_cents - paid_cents) FROM work_logs w
-                 WHERE w.client_id = c.id), 0) AS unpaid,
+                 WHERE w.client_id = c.id AND w.status <> 'paid'), 0) AS unpaid,
        COALESCE((SELECT SUM(amount_cents) FROM advances a
-                 WHERE a.client_id = c.id), 0) AS advanced
+                 WHERE a.client_id = c.id), 0)
+         - COALESCE((SELECT SUM(total_cents - paid_cents) FROM work_logs w
+                 WHERE w.client_id = c.id AND w.status = 'paid'), 0) AS advanced
      FROM clients c WHERE c.user_id = $1
      ORDER BY c.last_used_at DESC`, [owner]);
   return r.rows.map((row) => {
     const unpaid = Number(row.unpaid);
-    const advanced = Number(row.advanced);
+    const advanced = Math.max(0, Number(row.advanced));
     return { id: Number(row.id), name: row.name, unpaidCents: unpaid,
       advancedCents: advanced, ...settle(unpaid, advanced) };
   });
+}
+
+// This week's work and advances, grouped by client, for the dashboard's
+// "This week by client" section. Names and order come from the `clients`
+// array (clientBalances, last used first), so only clients with work or an
+// advance this week appear, and settle() decides what is owed or left over.
+async function weekByClient(db, owner, today, clients) {
+  const start = mondayOf(today);
+  const logs = await db.query(
+    `SELECT client_id, to_char(work_date, 'YYYY-MM-DD') AS date, work_type,
+       pay_basis, quantity, total_cents, status, paid_cents
+     FROM work_logs
+     WHERE user_id = $1 AND work_date >= date_trunc('week', $2::date)
+       AND work_date < date_trunc('week', $2::date) + interval '1 week'
+     ORDER BY work_date, id`, [owner, today]);
+  const advs = await db.query(
+    `SELECT client_id, to_char(advance_date, 'YYYY-MM-DD') AS date, amount_cents
+     FROM advances
+     WHERE user_id = $1 AND advance_date >= date_trunc('week', $2::date)
+       AND advance_date < date_trunc('week', $2::date) + interval '1 week'
+     ORDER BY advance_date, id`, [owner, today]);
+  const byClient = new Map();
+  function rowFor(id) {
+    let row = byClient.get(id);
+    if (!row) {
+      row = { days: new Set(), wagesCents: 0, paidCents: 0, advanceCents: 0,
+        hasUnpaid: false, items: [] };
+      byClient.set(id, row);
+    }
+    return row;
+  }
+  for (const r of logs.rows) {
+    const row = rowFor(Number(r.client_id));
+    row.days.add(r.date);
+    row.wagesCents += Number(r.total_cents);
+    row.paidCents += Number(r.paid_cents);
+    if (r.status !== 'paid') row.hasUnpaid = true;
+    row.items.push({ kind: 'work', date: r.date, workType: r.work_type,
+      payBasis: r.pay_basis, quantity: Number(r.quantity),
+      cents: Number(r.total_cents), status: r.status,
+      paidCents: Number(r.paid_cents) });
+  }
+  for (const r of advs.rows) {
+    const row = rowFor(Number(r.client_id));
+    row.advanceCents += Number(r.amount_cents);
+    row.items.push({ kind: 'advance', date: r.date, cents: Number(r.amount_cents) });
+  }
+  const out = [];
+  for (const c of clients) {
+    const row = byClient.get(c.id);
+    if (!row) continue;
+    row.items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    out.push({ clientId: c.id, client: c.name, start, end: today,
+      days: row.days.size, wagesCents: row.wagesCents, paidCents: row.paidCents,
+      advanceCents: row.advanceCents,
+      ...settle(row.wagesCents - row.paidCents, row.advanceCents),
+      hasUnpaid: row.hasUnpaid, items: row.items });
+  }
+  return out;
 }
 
 function createRouter(pool) {
@@ -397,8 +476,8 @@ function createRouter(pool) {
     const today = todayFor(req);
     if (!owner) {
       return res.json({ today, monthCents: 0, weekCents: 0, monthDays: 0,
-        weeks: [], clients: [], recent: [], owedCents: 0, advanceLeftCents: 0,
-        priceAlerts: [] });
+        weeks: [], clients: [], thisWeek: [], recent: [], owedCents: 0,
+        advanceLeftCents: 0, priceAlerts: [] });
     }
     const totals = await pool.query(
       `SELECT
@@ -428,6 +507,7 @@ function createRouter(pool) {
          FROM advances a JOIN clients c ON c.id = a.client_id WHERE a.user_id = $1
        ) e ORDER BY date DESC, created_at DESC LIMIT 8`, [owner]);
     const clients = await clientBalances(pool, owner);
+    const thisWeek = await weekByClient(pool, owner, today, clients);
     const priceAlerts = (await productSummaries(pool, owner, today))
       .filter((p) => p.belowGoal)
       .map((p) => ({ id: p.id, name: p.name, goalPct: p.goalPct, marginPct: p.marginPct,
@@ -440,6 +520,7 @@ function createRouter(pool) {
       monthDays: Number(t.month_days),
       weeks: weeks.rows.map((w) => ({ start: w.start, cents: Number(w.total) })),
       clients,
+      thisWeek,
       owedCents: clients.reduce((s, c) => s + c.owedCents, 0),
       advanceLeftCents: clients.reduce((s, c) => s + c.advanceLeftCents, 0),
       priceAlerts,
@@ -540,6 +621,72 @@ function createRouter(pool) {
          VALUES ($1, $2, $3, $4) RETURNING id`, [userId, clientId, b.date, amount]);
       await db.query('COMMIT');
       res.status(201).json({ id: Number(r.rows[0].id) });
+    } catch (err) {
+      await db.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      db.release();
+    }
+  });
+
+  // Mark one client's open days this week as paid, in one tap. This week's
+  // advance not yet used counts as part of the payment: what the advance
+  // covers raises paid_cents without cash changing hands, the rest arrives
+  // in cash. A covered day is `paid` with paid_cents < total_cents; the gap
+  // is advance used, which clientBalances counts against the advances.
+  router.post('/api/week-paid', async (req, res) => {
+    const b = req.body || {};
+    const today = typeof b.today === 'string' && DATE_RE.test(b.today)
+      && !Number.isNaN(Date.parse(b.today)) ? b.today : req.now.toISOString().slice(0, 10);
+    const clientId = Number(b.clientId);
+    const notFound = { error: 'Could not find that client.' };
+    if (!Number.isInteger(clientId) || clientId <= 0) {
+      return res.status(404).json(notFound);
+    }
+    const userId = String(req.user.id);
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      const owned = await db.query(
+        'SELECT id FROM clients WHERE id = $1 AND user_id = $2', [clientId, userId]);
+      if (!owned.rows[0]) {
+        await db.query('ROLLBACK').catch(() => {});
+        return res.status(404).json(notFound);
+      }
+      const logs = await db.query(
+        `SELECT id, total_cents, paid_cents, status FROM work_logs
+         WHERE user_id = $1 AND client_id = $2
+           AND work_date >= date_trunc('week', $3::date)
+           AND work_date < date_trunc('week', $3::date) + interval '1 week'
+         ORDER BY work_date, id FOR UPDATE`, [userId, clientId, today]);
+      const open = logs.rows.filter((r) => r.status !== 'paid');
+      if (!open.length) {
+        await db.query('ROLLBACK').catch(() => {});
+        return res.status(409).json({ error: 'Nothing unpaid for this client this week.' });
+      }
+      // U: what the open days still need. R: gaps on days an earlier mark
+      // already settled with advance money, so the same advance is not
+      // counted twice. A: this week's advances for this client.
+      const openCents = open.reduce((s, r) => s + Number(r.total_cents) - Number(r.paid_cents), 0);
+      const reusedCents = logs.rows
+        .filter((r) => r.status === 'paid')
+        .reduce((s, r) => s + Number(r.total_cents) - Number(r.paid_cents), 0);
+      const adv = await db.query(
+        `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM advances
+         WHERE user_id = $1 AND client_id = $2 AND advance_date >= date_trunc('week', $3::date)
+           AND advance_date < date_trunc('week', $3::date) + interval '1 week'`,
+        [userId, clientId, today]);
+      const advanceCents = Number(adv.rows[0].total);
+      const cover = Math.min(openCents, Math.max(0, advanceCents - reusedCents));
+      const updates = coverWithAdvance(open.map((r) => ({ id: Number(r.id),
+        totalCents: Number(r.total_cents), paidCents: Number(r.paid_cents) })), cover);
+      for (const u of updates) {
+        await db.query(
+          'UPDATE work_logs SET status = \'paid\', paid_cents = $1 WHERE id = $2 AND user_id = $3',
+          [u.paidCents, u.id, userId]);
+      }
+      await db.query('COMMIT');
+      res.json({ marked: updates.length, cashCents: openCents - cover });
     } catch (err) {
       await db.query('ROLLBACK').catch(() => {});
       throw err;
@@ -738,4 +885,5 @@ function createRouter(pool) {
   return router;
 }
 
-module.exports = { migrate, createRouter, settle, suggestedPrice, priceFacts, OCCUPATIONS };
+module.exports = { migrate, createRouter, settle, suggestedPrice, priceFacts,
+  coverWithAdvance, weekByClient, mondayOf, OCCUPATIONS };

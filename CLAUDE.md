@@ -146,6 +146,11 @@ Re-theme by changing the token values there, keeping every text pair at
 - Advance balances are derived, never stored: per client,
   `owed = max(0, unpaid - advances)` and
   `advance left = max(0, advances - unpaid)` (`settle()` in `wagebook.js`).
+- Mark as paid (`POST /api/week-paid`) settles one client's open days this
+  week. This week's advance not yet used counts as part of the payment, so
+  a covered day is `status = 'paid'` with `paid_cents < total_cents`, and
+  that gap is advance used. `clientBalances` counts it against advances,
+  not as unpaid.
 - Suggested price for an item: cost per item divided by (1 minus the
   profit goal), rounded up to a whole unit (`suggestedPrice()` in
   `wagebook.js`). Profit % is taken on the selling price, not the cost:
