@@ -476,7 +476,7 @@ function createRouter(pool) {
     const today = todayFor(req);
     if (!owner) {
       return res.json({ today, monthCents: 0, weekCents: 0, monthDays: 0,
-        weeks: [], clients: [], thisWeek: [], recent: [], owedCents: 0,
+        totalCents: 0, weeks: [], clients: [], thisWeek: [], recent: [], owedCents: 0,
         advanceLeftCents: 0, priceAlerts: [] });
     }
     const totals = await pool.query(
@@ -486,7 +486,8 @@ function createRouter(pool) {
          COUNT(DISTINCT work_date) FILTER (WHERE work_date >= date_trunc('month', $2::date)
            AND work_date < date_trunc('month', $2::date) + interval '1 month') AS month_days,
          COALESCE(SUM(total_cents) FILTER (WHERE work_date >= date_trunc('week', $2::date)
-           AND work_date < date_trunc('week', $2::date) + interval '1 week'), 0) AS week
+           AND work_date < date_trunc('week', $2::date) + interval '1 week'), 0) AS week,
+         COALESCE(SUM(total_cents), 0) AS total
        FROM work_logs WHERE user_id = $1`, [owner, today]);
     const weeks = await pool.query(
       `SELECT to_char(s.start, 'YYYY-MM-DD') AS start, COALESCE(SUM(w.total_cents), 0) AS total
@@ -517,6 +518,7 @@ function createRouter(pool) {
       today,
       monthCents: Number(t.month),
       weekCents: Number(t.week),
+      totalCents: Number(t.total),
       monthDays: Number(t.month_days),
       weeks: weeks.rows.map((w) => ({ start: w.start, cents: Number(w.total) })),
       clients,
