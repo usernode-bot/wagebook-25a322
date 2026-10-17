@@ -173,11 +173,13 @@
         '<div><h1 class="text-title">WageBook</h1>' +
         (name ? '<p class="text-body text-muted">' + esc(name) + '</p>' : '') + '</div>' +
         '<a href="' + href('/profile') + '" data-nav="/profile" class="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus" aria-label="Your profile">' + avatar + '</a>' +
-      '</header>' + demoNote() +
+      '</header>' + demoNote() + (hasData ? balanceCard(d) : '') +
       '<div class="flex flex-col gap-3">' +
         '<a href="' + href('/log') + '" data-nav="/log" class="btn-primary min-h-16 text-heading" id="log-work">' + icon('plus', 'h-7 w-7') + 'Log today\'s work</a>' +
         '<a href="' + href('/advance') + '" data-nav="/advance" class="btn-secondary min-h-14 text-heading" id="take-advance">' + icon('banknote', 'h-6 w-6') + 'Take an advance</a>' +
-        '<a href="' + href('/prices') + '" data-nav="/prices" class="btn-secondary min-h-14 text-heading" id="open-prices">' + icon('tag', 'h-6 w-6') + 'Prices and profit</a>' +
+        '<a href="' + href('/prices') + '" data-nav="/prices" class="btn-secondary min-h-14 py-2 text-heading" id="open-prices">' + icon('tag', 'h-6 w-6 shrink-0') +
+          '<span class="flex flex-col text-center"><span>Prices and profit</span>' +
+          '<span class="text-small font-normal text-muted">Your items, what they sell for, what you make</span></span></a>' +
       '</div>';
 
     // Drawn before the empty-book branch, so a vendor who never logs a work
@@ -212,7 +214,21 @@
     if (!hasData) {
       html += '<section class="state-empty card" id="empty-book">' +
         '<p class="text-heading">Your wage book is empty</p>' +
-        '<p class="text-body text-muted">Tap Log today\'s work above after a day of work. Your earnings, unpaid wages and advances show up here.</p></section>';
+        '<p class="text-body text-muted">Your earnings, unpaid wages and advances show up here once you start.</p></section>';
+      // A new person's first look at the app: three everyday steps, each a
+      // link to its screen. Only shown while the book is still empty.
+      var steps = [
+        { path: '/log', title: 'Log today\'s work', line: 'After a day of work, write down who you worked for and your wage.' },
+        { path: '/advance', title: 'Take an advance', line: 'When a client gives you cash before your wages, write it down here.' },
+        { path: '/prices', title: 'Prices and profit', line: 'If you sell things, see what to charge and how much you keep.' },
+      ];
+      html += '<section id="start-steps" aria-label="How to start"><h2 class="section-label">How to start, in 3 steps</h2><ol class="list">' +
+        steps.map(function (s, i) {
+          return '<li><a href="' + href(s.path) + '" data-nav="' + s.path + '" class="list-row hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus">' +
+            '<span aria-hidden="true" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-line bg-raised text-heading">' + (i + 1) + '</span>' +
+            '<div class="min-w-0 flex-1"><p class="text-body font-medium">' + s.title + '</p>' +
+            '<p class="text-small text-muted">' + s.line + '</p></div></a></li>';
+        }).join('') + '</ol></section>';
       app.innerHTML = html;
       return;
     }
@@ -247,6 +263,24 @@
 
     app.innerHTML = html;
     wireChart(d.weeks);
+  }
+
+  // Balance summary: the three numbers people check most, above the buttons.
+  function balanceCard(d) {
+    var unpaid = d.clients.reduce(function (s, c) { return s + c.unpaidCents; }, 0);
+    return '<section class="card" id="balance" aria-label="Balance summary">' +
+      '<dl class="divide-y divide-line">' +
+        '<div class="flex items-baseline justify-between gap-3 pb-2">' +
+          '<dt class="text-body text-muted">Total earned</dt>' +
+          '<dd class="text-heading tabular-nums">' + money(d.totalCents) + '</dd></div>' +
+        '<div class="flex items-baseline justify-between gap-3 py-2">' +
+          '<dt class="text-body text-muted">Unpaid wages</dt>' +
+          '<dd class="text-heading tabular-nums">' + money(unpaid) + '</dd></div>' +
+        '<div class="flex items-baseline justify-between gap-3 pt-2">' +
+          '<dt class="text-body font-medium">Left after advances</dt>' +
+          '<dd class="text-title tabular-nums">' + money(d.owedCents) + '</dd></div>' +
+      '</dl>' +
+      '<p class="text-small text-muted">What clients still owe you after advances</p></section>';
   }
 
   function tile(ic, label, cents, sub) {
