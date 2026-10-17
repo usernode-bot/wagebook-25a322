@@ -7,6 +7,15 @@
   },
   "tests": [
     {
+      "id": "dashboard.payday",
+      "name": "Dashboard reminds you on a client's payday (demo data)",
+      "path": "/?demo=1&un-now=2026-10-17T10:00:00Z",
+      "expectSelector": "#payday-banner",
+      "expectText": "Payday today",
+      "visual": true,
+      "impact": ["public/app.js", "wagebook.js"]
+    },
+    {
       "id": "dashboard.demo",
       "name": "Dashboard shows totals, weekly chart and client balances (demo data)",
       "path": "/?demo=1",
@@ -32,6 +41,17 @@
       "path": "/advance?demo=1",
       "expectSelector": "#amount",
       "expectText": "Who gave you the advance?"
+    },
+    {
+      "name": "Take an advance marks a client close to the advance limit (demo data)",
+      "path": "/advance?demo=1",
+      "expectSelector": "[data-client][data-limit=\"near\"]",
+      "expectText": "Who gave you the advance?"
+    },
+    {
+      "name": "Dashboard client rows open the client's settings (demo data)",
+      "path": "/?demo=1",
+      "expectSelector": "#client-balances a[data-nav^=\"/clients/\"]"
     },
     {
       "name": "Profile form",

@@ -6,6 +6,7 @@
 //   /prices/new  add an item: costs, profit goal, suggested price
 //   /prices/:id  one item: change its prices, see its history
 //   /profile     your name, photo, work and town
+//   /clients/:id one client: their advance limit and payday
 // Class names are written as whole literals so the Tailwind build sees them.
 (function () {
   'use strict';
@@ -82,6 +83,7 @@
     tag: '<path d="M12 2H2v10l9.3 9.3a1 1 0 0 0 1.4 0l8.6-8.6a1 1 0 0 0 0-1.4z"/><circle cx="7" cy="7" r="1.5"/>',
     alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
     x: '<path d="M18 6 6 18M6 6l12 12"/>',
+    chevron: '<path d="m9 18 6-6-6-6"/>',
   };
   function icon(name, cls) {
     return '<svg class="' + (cls || 'h-6 w-6') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
@@ -116,6 +118,8 @@
     if (p === '/prices/new') return renderItem(null);
     var m = p.match(/^\/prices\/(\d+)$/);
     if (m) return renderItem(Number(m[1]));
+    m = p.match(/^\/clients\/(\d+)$/);
+    if (m) return renderClient(Number(m[1]));
     return renderDashboard();
   }
 
@@ -172,6 +176,20 @@
 
     // Drawn before the empty-book branch, so a vendor who never logs a work
     // day still sees them.
+    if (d.paydays && d.paydays.length) {
+      html += '<section id="payday-banner" aria-label="Payday today"><h2 class="section-label">Payday today</h2><ul class="list">' +
+        d.paydays.map(function (c) {
+          var right = c.owedCents > 0
+            ? '<p class="text-small text-muted">Owes you</p><p class="text-body font-semibold tabular-nums">' + money(c.owedCents) + '</p>'
+            : '<p class="text-small text-muted">Advance left</p><p class="text-body font-semibold text-accent tabular-nums">' + money(c.advanceLeftCents) + '</p>';
+          return '<a href="' + href('/clients/' + c.id) + '" data-nav="/clients/' + c.id + '" class="list-row">' +
+            stamp(d.today) +
+            '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">' + esc(c.name) + '</p>' +
+            '<p class="text-small text-muted">Unpaid wages ' + money(c.unpaidCents) + ', advances ' + money(c.advancedCents) + '</p>' +
+            (c.limitLevel === 'over' ? '<p class="text-small font-medium text-danger">Over the ' + c.limitPct + '% advance limit</p>' : '') + '</div>' +
+            '<div class="shrink-0 text-right">' + right + '</div></a>';
+        }).join('') + '</ul></section>';
+    }
     if (d.priceAlerts && d.priceAlerts.length) {
       html += '<section id="price-alerts" aria-label="Prices to check"><h2 class="section-label">Prices to check</h2><ul class="list">' +
         d.priceAlerts.map(function (p) {
@@ -211,9 +229,11 @@
         var detail = c.advancedCents > 0
           ? 'Unpaid ' + money(c.unpaidCents) + ', advances ' + money(c.advancedCents)
           : (c.unpaidCents > 0 ? 'No advances' : '');
-        return '<li class="list-row justify-between"><div class="min-w-0"><p class="truncate text-body font-medium">' + esc(c.name) + '</p>' +
+        return '<li><a href="' + href('/clients/' + c.id) + '" data-nav="/clients/' + c.id + '" class="list-row justify-between">' +
+          '<div class="min-w-0"><p class="truncate text-body font-medium">' + esc(c.name) + '</p>' +
           (detail ? '<p class="text-small text-muted">' + esc(detail) + '</p>' : '') + '</div>' +
-          '<p class="shrink-0 text-right text-body ' + cls + '">' + esc(line) + '</p></li>';
+          '<p class="shrink-0 text-right text-body ' + cls + '">' + esc(line) + '</p>' +
+          icon('chevron', 'h-5 w-5 text-muted') + '</a></li>';
       }).join('') + '</ul></section>';
 
     html += '<section><h2 class="section-label">Recent entries</h2><ul class="list" id="recent">' +
@@ -325,7 +345,14 @@
 
   function clientPicker(clients, value) {
     var chips = clients.map(function (c) {
-      return '<button type="button" class="btn-secondary max-w-full" data-client="' + esc(c.name) + '" aria-pressed="' + (c.name.toLowerCase() === value.toLowerCase()) + '"><span class="truncate">' + esc(c.name) + '</span></button>';
+      var marked = c.limitLevel === 'near' || c.limitLevel === 'over';
+      var mark = marked
+        ? '<span class="' + (c.limitLevel === 'over' ? 'text-danger' : 'text-accent') + '">' + icon('alert', 'h-5 w-5') + '</span>' +
+          '<span class="sr-only">, ' + (c.limitLevel === 'over' ? 'over' : 'close to') + ' the advance limit</span>'
+        : '';
+      return '<button type="button" class="btn-secondary max-w-full"' + (marked ? ' data-limit="' + c.limitLevel + '"' : '') +
+        ' data-client="' + esc(c.name) + '" aria-pressed="' + (c.name.toLowerCase() === value.toLowerCase()) + '">' +
+        '<span class="truncate">' + esc(c.name) + '</span>' + mark + '</button>';
     }).join('');
     return '<div class="flex flex-col gap-2"><label for="client" class="text-body font-medium">Who did you work for?</label>' +
       (chips ? '<div class="flex flex-wrap gap-2" id="client-chips">' + chips + '</div>' : '') +
@@ -582,6 +609,29 @@
   }
 
   // ── Take an advance ──────────────────────────────────────────────────────
+  // The advance-limit maths, the page's copy of wagebook.js's one
+  // definition, so the live strip matches what the server saves.
+  function limitStatus(unpaidCents, advancedCents, pct) {
+    var limitPct = pct == null ? 50 : pct;
+    if (limitPct === 0) return { limitPct: limitPct, limitCents: null, limitLevel: 'off' };
+    var limitCents = Math.floor((unpaidCents * limitPct) / 100);
+    var limitLevel = 'safe';
+    if (advancedCents > limitCents) limitLevel = 'over';
+    else if (advancedCents > 0 && advancedCents * 100 >= limitCents * 80) limitLevel = 'near';
+    return { limitPct: limitPct, limitCents: limitCents, limitLevel: limitLevel };
+  }
+
+  // The warning strip: orange (the app's accent) when close to the advance
+  // limit, red when over it. `st` is a limitStatus result; `body` carries
+  // the numbers. Shared by Take an advance and the client screen.
+  function limitStrip(st, body) {
+    var over = st.limitLevel === 'over';
+    return '<div class="flex gap-3 rounded-lg border px-3 py-3 ' + (over ? 'border-danger bg-surface' : 'border-accent bg-raised') + '">' +
+      '<span class="shrink-0 ' + (over ? 'text-danger' : 'text-accent') + '">' + icon('alert', 'h-6 w-6') + '</span>' +
+      '<div><p class="text-body font-semibold ' + (over ? 'text-danger' : '') + '">' + (over ? 'Over the advance limit' : 'Close to the advance limit') + '</p>' +
+      '<p class="text-body">' + body + '</p></div></div>';
+  }
+
   function renderAdvance() { loadForm(drawAdvance); }
 
   function drawAdvance(data) {
@@ -594,14 +644,17 @@
       '<div class="flex flex-col gap-2"><label for="amount" class="text-body font-medium">Amount</label>' +
       '<input id="amount" class="field text-heading tabular-nums" inputmode="decimal" placeholder="e.g. 100000"></div>' +
       '<div id="advance-effect" class="rounded-lg bg-raised px-3 py-3 text-body" hidden></div>' +
+      '<div id="limit-warning" role="status" hidden></div>' +
       errorBox +
       '<button type="submit" class="btn-primary min-h-14 text-heading">Save advance</button></form>';
 
     var effect = document.getElementById('advance-effect');
+    var warn = document.getElementById('limit-warning');
     function preview() {
       var c = findClient(data.clients, s.client);
       var amt = Math.round(num(s.amount) * 100);
-      if (!s.client.trim()) { effect.hidden = true; return; }
+      if (!isFinite(amt) || amt < 0) amt = 0; // an empty or odd amount is just 0 for the limit
+      if (!s.client.trim()) { effect.hidden = true; warn.hidden = true; return; }
       var owed = c ? c.unpaidCents : 0, adv = c ? c.advancedCents : 0;
       var lines = [];
       lines.push(c ? (c.owedCents > 0 ? esc(c.name) + ' owes you <strong class="tabular-nums">' + money(c.owedCents) + '</strong> now.'
@@ -616,6 +669,20 @@
       }
       effect.innerHTML = lines.map(function (l) { return '<p>' + l + '</p>'; }).join('');
       effect.hidden = false;
+      // The limit strip counts the advance you are about to save. A client
+      // with no unpaid wages counts any advance as over the limit.
+      var st = limitStatus(owed, adv + Math.max(amt, 0), c ? c.limitPct : null);
+      var name = c ? c.name : s.client.trim();
+      if (st.limitLevel === 'near' || st.limitLevel === 'over') {
+        var body = (c && c.unpaidCents === 0)
+          ? esc(name) + ' owes you no unpaid wages yet, so any advance is over the limit.'
+          : (amt > 0 ? 'With this advance you have ' : 'You have ') +
+            '<strong class="tabular-nums">' + money(adv + Math.max(amt, 0)) + '</strong> in advances from ' + esc(name) +
+            '. The limit is <strong class="tabular-nums">' + money(st.limitCents) + '</strong>, ' + st.limitPct +
+            '% of the <strong class="tabular-nums">' + money(owed) + '</strong> in unpaid wages.';
+        warn.innerHTML = limitStrip(st, body);
+        warn.hidden = false;
+      } else warn.hidden = true;
     }
     wireDate('date', function (v) { s.date = v; });
     wireClient(function (v) { s.client = v; preview(); });
@@ -630,7 +697,10 @@
       var btn = e.submitter || app.querySelector('#advance-form [type=submit]');
       btn.disabled = true;
       api('/api/advances', { method: 'POST', body: { date: s.date, client: s.client, amount: num(s.amount) } })
-        .then(function () { saved('Advance saved'); })
+        .then(function (res) {
+          saved(res.limit && res.limit.limitLevel === 'over'
+            ? 'Advance saved. It is over the advance limit.' : 'Advance saved');
+        })
         .catch(function (err) { btn.disabled = false; formError(err.message); });
     });
   }
@@ -906,6 +976,132 @@
       var path = isNew || demoCopy ? '/api/products' : '/api/products/' + id;
       api(path, { method: isNew || demoCopy ? 'POST' : 'PUT', body: body })
         .then(function () { saved(isNew || demoCopy ? 'Item saved' : 'Prices saved', '/prices'); })
+        .catch(function (err) { btn.disabled = false; formError(err.message); });
+    });
+  }
+
+  // ── One client: advance limit and payday ─────────────────────────────────
+  var WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  function renderClient(id) {
+    app.innerHTML = '<div class="flex flex-col gap-4" aria-busy="true"><div class="skeleton h-11 w-48"></div><div class="skeleton h-24 w-full"></div><div class="skeleton h-40 w-full"></div></div>';
+    Promise.all([me ? Promise.resolve(me) : loadMe(), api('/api/clients/' + id)])
+      .then(function (r) { drawClient(r[1].client); })
+      .catch(function (err) {
+        if (err.status === 404) {
+          app.innerHTML = backBar('Client', null, '/') +
+            '<div class="state-error card"><p class="text-heading">That client is not in your book</p>' +
+            '<p class="text-body text-muted">It may have been saved by someone else, or the link is old.</p>' +
+            '<a href="' + href('/') + '" data-nav="/" class="btn-secondary mt-2">Back to the dashboard</a></div>';
+          return;
+        }
+        errorState(err.message, function () { renderClient(id); }, 'Could not load this client');
+      });
+  }
+
+  function drawClient(c) {
+    var s = { limitPct: c.limitPct, payday: c.payday ? { kind: c.payday.kind, day: c.payday.day } : null };
+
+    function stripBox() {
+      var box = document.getElementById('client-limit');
+      var st = limitStatus(c.unpaidCents, c.advancedCents, s.limitPct);
+      if (st.limitLevel === 'near' || st.limitLevel === 'over') {
+        var body = (c.unpaidCents === 0)
+          ? esc(c.name) + ' owes you no unpaid wages yet, so any advance is over the limit.'
+          : 'You have <strong class="tabular-nums">' + money(c.advancedCents) + '</strong> in advances from ' + esc(c.name) +
+            '. The limit is <strong class="tabular-nums">' + money(st.limitCents) + '</strong>, ' + st.limitPct +
+            '% of the <strong class="tabular-nums">' + money(c.unpaidCents) + '</strong> in unpaid wages.';
+        box.innerHTML = limitStrip(st, body);
+        box.hidden = false;
+      } else { box.innerHTML = ''; box.hidden = true; }
+    }
+
+    function drawPaydayDetail() {
+      var box = document.getElementById('payday-detail');
+      if (!s.payday) { box.innerHTML = ''; return; }
+      if (s.payday.kind === 'week') {
+        box.innerHTML = '<p class="text-body font-medium">Which day?</p>' +
+          '<div class="flex flex-wrap gap-2">' + WEEKDAYS.map(function (d, i) {
+            return '<button type="button" class="btn-secondary" data-payday-day="' + (i + 1) + '" aria-pressed="' + (s.payday.day === i + 1) + '">' + d + '</button>';
+          }).join('') + '</div>' +
+          '<p class="text-small text-muted">On this day, WageBook reminds you on the dashboard what they owe you.</p>';
+        box.querySelectorAll('[data-payday-day]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            s.payday.day = +b.getAttribute('data-payday-day');
+            drawPaydayDetail();
+          });
+        });
+      } else {
+        box.innerHTML = '<label for="payday-date" class="text-body font-medium">Which date?</label>' +
+          '<input id="payday-date" class="field tabular-nums" inputmode="numeric" placeholder="e.g. 25" value="' + esc(s.payday.day || '') + '">' +
+          '<p class="text-small text-muted">In shorter months, the last day counts.</p>' +
+          '<p class="text-small text-muted">On this day, WageBook reminds you on the dashboard what they owe you.</p>';
+        document.getElementById('payday-date').addEventListener('input', function (e) {
+          var n = parseInt(e.target.value, 10);
+          s.payday.day = n >= 1 && n <= 31 ? n : null;
+        });
+      }
+    }
+
+    app.innerHTML = backBar(c.name) + demoNote() +
+      '<div class="rounded-lg bg-raised px-3 py-3 text-body">' +
+      '<p>Unpaid wages <strong class="tabular-nums">' + money(c.unpaidCents) + '</strong>. Advances <strong class="tabular-nums">' + money(c.advancedCents) + '</strong>.</p>' +
+      '<p>' + (c.owedCents > 0
+        ? 'They owe you <strong class="tabular-nums">' + money(c.owedCents) + '</strong> after advances.'
+        : (c.advanceLeftCents > 0
+          ? 'Advance left <strong class="tabular-nums">' + money(c.advanceLeftCents) + '</strong>.'
+          : 'All settled.')) + '</p></div>' +
+      '<div id="client-limit" role="status" hidden></div>' +
+      '<form id="client-form" class="flex flex-col gap-5" novalidate>' +
+      '<fieldset class="flex flex-col gap-2"><legend class="text-body font-medium">Advance limit</legend>' +
+      '<p class="text-small text-muted">The most you want to take in advances, as a share of the unpaid wages this client owes you.</p>' +
+      '<div class="flex flex-wrap gap-2">' + [0, 25, 50, 75, 100].map(function (p) {
+        return '<button type="button" class="btn-secondary" data-limit-pct="' + p + '" aria-pressed="' + (s.limitPct === p) + '">' + (p === 0 ? 'No limit' : p + '%') + '</button>';
+      }).join('') + '</div></fieldset>' +
+      '<fieldset class="flex flex-col gap-2"><legend class="text-body font-medium">Payday</legend>' +
+      '<div class="flex flex-wrap gap-2">' +
+      '<button type="button" class="btn-secondary" data-payday-kind="" aria-pressed="' + (!s.payday) + '">No payday</button>' +
+      '<button type="button" class="btn-secondary" data-payday-kind="week" aria-pressed="' + (!!(s.payday && s.payday.kind === 'week')) + '">Every week</button>' +
+      '<button type="button" class="btn-secondary" data-payday-kind="month" aria-pressed="' + (!!(s.payday && s.payday.kind === 'month')) + '">Every month</button>' +
+      '</div><div id="payday-detail" class="flex flex-col gap-2"></div></fieldset>' +
+      errorBox +
+      '<button type="submit" class="btn-primary min-h-14 text-heading">Save client</button></form>';
+
+    app.querySelectorAll('[data-limit-pct]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        s.limitPct = +b.getAttribute('data-limit-pct');
+        app.querySelectorAll('[data-limit-pct]').forEach(function (x) {
+          x.setAttribute('aria-pressed', String(+x.getAttribute('data-limit-pct') === s.limitPct));
+        });
+        stripBox();
+      });
+    });
+    app.querySelectorAll('[data-payday-kind]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var k = b.getAttribute('data-payday-kind');
+        if (!k) s.payday = null;
+        else s.payday = { kind: k, day: (s.payday && s.payday.kind === k) ? s.payday.day : (k === 'week' ? 1 : null) };
+        app.querySelectorAll('[data-payday-kind]').forEach(function (x) {
+          var on = s.payday ? s.payday.kind === x.getAttribute('data-payday-kind') : x.getAttribute('data-payday-kind') === '';
+          x.setAttribute('aria-pressed', String(on));
+        });
+        drawPaydayDetail();
+      });
+    });
+    drawPaydayDetail();
+    stripBox();
+
+    document.getElementById('client-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (s.payday && s.payday.kind === 'month' && !(s.payday.day >= 1 && s.payday.day <= 31)) {
+        return formError('Enter a payday date from 1 to 31.');
+      }
+      var btn = app.querySelector('#client-form [type=submit]');
+      btn.disabled = true;
+      api('/api/client-settings', { method: 'PUT', body: {
+        name: c.name, limitPct: s.limitPct,
+        payday: s.payday && s.payday.day ? s.payday : null,
+      } }).then(function () { saved('Client saved'); })
         .catch(function (err) { btn.disabled = false; formError(err.message); });
     });
   }
