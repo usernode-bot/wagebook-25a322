@@ -137,8 +137,14 @@
   }
 
   function errorState(msg, retry, title) {
+    // A raw HTTP status ("Internal Server Error") says nothing a person can
+    // act on: show a plain line instead of the server's own words.
+    var RAW_STATUS = /^(internal server error|bad gateway|service unavailable|gateway timeout|bad request|not found)$/i;
+    var detail = msg && !RAW_STATUS.test(msg.trim())
+      ? esc(msg) + ' '
+      : 'Something went wrong on our side. ';
     app.innerHTML = '<div class="state-error card"><p class="text-heading">' + esc(title || 'Could not load your wage book') + '</p>' +
-      '<p class="text-body text-muted">' + esc(msg) + ' Nothing you saved is lost.</p>' +
+      '<p class="text-body text-muted">' + detail + 'Nothing you saved is lost.</p>' +
       '<button type="button" class="btn-primary mt-2" id="retry">Retry</button></div>';
     document.getElementById('retry').onclick = retry;
   }
@@ -195,7 +201,7 @@
         d.priceAlerts.map(function (p) {
           return '<a href="' + href('/prices/' + p.id) + '" data-nav="/prices/' + p.id + '" class="list-row">' +
             '<span class="shrink-0 text-danger">' + icon('alert', 'h-6 w-6') + '</span>' +
-            '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">' + esc(p.name) + '</p>' +
+            '<div class="min-w-0 flex-1"><p class="line-clamp-2 text-body font-medium">' + esc(p.name) + '</p>' +
             '<p class="text-small text-muted">' + (p.costRoseCents > 0 ? 'Costs went up. ' : '') +
             'Profit is ' + p.marginPct + '%, your goal is ' + p.goalPct + '%.</p></div>' +
             '<div class="shrink-0 text-right"><p class="text-small text-muted">Suggested price</p>' +
