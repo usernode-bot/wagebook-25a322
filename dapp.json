@@ -16,6 +16,15 @@
       "impact": ["public/app.js", "public/index.html", "styles/**", "wagebook.js"]
     },
     {
+      "id": "week-recap.demo",
+      "name": "Dashboard shows this week by client with Share recap (demo data)",
+      "path": "/?demo=1",
+      "expectSelector": "#week-recap",
+      "expectText": "Share recap",
+      "visual": true,
+      "impact": ["public/app.js", "wagebook.js"]
+    },
+    {
       "name": "Empty book shows a 3-step start guide",
       "path": "/",
       "expectSelector": "#start-steps",

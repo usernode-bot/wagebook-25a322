@@ -7,7 +7,11 @@ workers, carpenters, welders, drivers, domestic helpers and freelancers.
 
 - **Dashboard**: what you earned this month and this week, unpaid wages
   owed to you, advances you still have to work off, a bar chart of the
-  last 8 weeks, a balance per client and your recent entries.
+  last 8 weeks, a balance per client and your recent entries. "This week
+  by client" shows each client's days, wages, paid amount and advance for
+  the week, with a "Share recap" button that sends a tidy summary through
+  the phone's share sheet or WhatsApp, and "Mark as paid" that settles
+  that client's unpaid days for the week in one tap.
 - **Log today's work** (`/log`), three steps: the day and who you worked
   for, how much (by the day or by the hour, total worked out for you and
   editable), and whether you were paid (paid, unpaid or partly paid, with
