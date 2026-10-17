@@ -167,7 +167,9 @@
       '<div class="flex flex-col gap-3">' +
         '<a href="' + href('/log') + '" data-nav="/log" class="btn-primary min-h-16 text-heading" id="log-work">' + icon('plus', 'h-7 w-7') + 'Log today\'s work</a>' +
         '<a href="' + href('/advance') + '" data-nav="/advance" class="btn-secondary min-h-14 text-heading" id="take-advance">' + icon('banknote', 'h-6 w-6') + 'Take an advance</a>' +
-        '<a href="' + href('/prices') + '" data-nav="/prices" class="btn-secondary min-h-14 text-heading" id="open-prices">' + icon('tag', 'h-6 w-6') + 'Prices and profit</a>' +
+        '<a href="' + href('/prices') + '" data-nav="/prices" class="btn-secondary min-h-14 py-2 text-heading" id="open-prices">' + icon('tag', 'h-6 w-6 shrink-0') +
+          '<span class="flex flex-col text-center"><span>Prices and profit</span>' +
+          '<span class="text-small font-normal text-muted">Your items, what they sell for, what you make</span></span></a>' +
       '</div>';
 
     // Drawn before the empty-book branch, so a vendor who never logs a work
