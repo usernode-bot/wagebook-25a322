@@ -16,6 +16,12 @@
       "impact": ["public/app.js", "public/index.html", "styles/**", "wagebook.js"]
     },
     {
+      "name": "Empty book shows a 3-step start guide",
+      "path": "/",
+      "expectSelector": "#start-steps",
+      "expectText": "How to start, in 3 steps"
+    },
+    {
       "name": "Dashboard with an empty book offers to log the first day",
       "path": "/",
       "expectSelector": "#empty-book",
