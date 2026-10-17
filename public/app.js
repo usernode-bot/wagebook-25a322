@@ -188,7 +188,21 @@
     if (!hasData) {
       html += '<section class="state-empty card" id="empty-book">' +
         '<p class="text-heading">Your wage book is empty</p>' +
-        '<p class="text-body text-muted">Tap Log today\'s work above after a day of work. Your earnings, unpaid wages and advances show up here.</p></section>';
+        '<p class="text-body text-muted">Your earnings, unpaid wages and advances show up here once you start.</p></section>';
+      // A new person's first look at the app: three everyday steps, each a
+      // link to its screen. Only shown while the book is still empty.
+      var steps = [
+        { path: '/log', title: 'Log today\'s work', line: 'After a day of work, write down who you worked for and your wage.' },
+        { path: '/advance', title: 'Take an advance', line: 'When a client gives you cash before your wages, write it down here.' },
+        { path: '/prices', title: 'Prices and profit', line: 'If you sell things, see what to charge and how much you keep.' },
+      ];
+      html += '<section id="start-steps" aria-label="How to start"><h2 class="section-label">How to start, in 3 steps</h2><ol class="list">' +
+        steps.map(function (s, i) {
+          return '<li><a href="' + href(s.path) + '" data-nav="' + s.path + '" class="list-row hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus">' +
+            '<span aria-hidden="true" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-line bg-raised text-heading">' + (i + 1) + '</span>' +
+            '<div class="min-w-0 flex-1"><p class="text-body font-medium">' + s.title + '</p>' +
+            '<p class="text-small text-muted">' + s.line + '</p></div></a></li>';
+        }).join('') + '</ol></section>';
       app.innerHTML = html;
       return;
     }
