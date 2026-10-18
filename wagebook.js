@@ -542,12 +542,12 @@ function createRouter(pool) {
     const recent = await pool.query(
       `SELECT * FROM (
          SELECT 'work' AS kind, w.id, to_char(w.work_date, 'YYYY-MM-DD') AS date, c.name AS client,
-           w.work_type, w.pay_basis, w.quantity, w.total_cents AS amount, w.status, w.paid_cents,
+           w.work_type, w.pay_basis, w.quantity, w.rate_cents, w.total_cents AS amount, w.status, w.paid_cents,
            w.photo_url, w.created_at
          FROM work_logs w JOIN clients c ON c.id = w.client_id WHERE w.user_id = $1
          UNION ALL
          SELECT 'advance', a.id, to_char(a.advance_date, 'YYYY-MM-DD'), c.name,
-           NULL, NULL, NULL, a.amount_cents, NULL, NULL, NULL, a.created_at
+           NULL, NULL, NULL, NULL, a.amount_cents, NULL, NULL, NULL, a.created_at
          FROM advances a JOIN clients c ON c.id = a.client_id WHERE a.user_id = $1
        ) e ORDER BY date DESC, created_at DESC LIMIT 8`, [owner]);
     const clients = await clientBalances(pool, owner);
@@ -583,6 +583,7 @@ function createRouter(pool) {
         kind: e.kind, id: Number(e.id), date: e.date, client: e.client,
         workType: e.work_type, payBasis: e.pay_basis,
         quantity: e.quantity == null ? null : Number(e.quantity),
+        rateCents: e.rate_cents == null ? null : Number(e.rate_cents),
         cents: Number(e.amount), status: e.status,
         paidCents: e.paid_cents == null ? null : Number(e.paid_cents),
         photoUrl: e.photo_url,

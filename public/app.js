@@ -86,6 +86,7 @@
     x: '<path d="M18 6 6 18M6 6l12 12"/>',
     share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
     chevron: '<path d="m9 18 6-6-6-6"/>',
+    repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
   };
   function icon(name, cls) {
     return '<svg class="' + (cls || 'h-6 w-6') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
@@ -107,6 +108,10 @@
   });
 
   var me = null;
+  // One-shot seed for "Log this again": the dashboard hands the tapped entry
+  // to the next drawLog and it is cleared at once, so a reload or back-and-
+  // forward gives the plain wizard.
+  var logSeed = null;
   function loadMe() {
     return api('/api/me').then(function (d) { me = d; return d; });
   }
@@ -270,6 +275,17 @@
     app.innerHTML = html;
     wireChart(d.weeks);
     wireWeekRecap(d.thisWeek || []);
+    wireAgain(d.recent);
+  }
+
+  // "Log this again": a work entry becomes the seed for the log wizard.
+  function wireAgain(recent) {
+    app.querySelectorAll('[data-again]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        logSeed = recent[+b.getAttribute('data-again')];
+        go('/log');
+      });
+    });
   }
 
   // This week by client: the same list as "Money by client", but only this
@@ -418,7 +434,7 @@
     partial: { label: 'Partly paid', cls: 'text-accent' },
   };
 
-  function entryRow(e) {
+  function entryRow(e, i) {
     if (e.kind === 'advance') {
       return '<li class="list-row">' + stamp(e.date) +
         '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">Advance from ' + esc(e.client) + '</p>' +
@@ -428,12 +444,15 @@
     var st = STATUS[e.status];
     var amount = e.quantity + (e.payBasis === 'day' ? (e.quantity === 1 ? ' day' : ' days') : (e.quantity === 1 ? ' hour' : ' hours'));
     var sub = [e.workType, amount].filter(Boolean).join(', ');
-    return '<li class="list-row">' + stamp(e.date) +
+    return '<li class="list-row flex-col items-stretch gap-2">' +
+      '<div class="flex items-center gap-3">' + stamp(e.date) +
       '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">' + esc(e.client) + '</p>' +
       '<p class="truncate text-small text-muted">' + esc(sub) + (e.photoUrl ? ', photo' : '') + '</p></div>' +
       '<div class="shrink-0 text-right"><p class="text-body font-semibold tabular-nums">' + money(e.cents) + '</p>' +
       '<p class="text-small font-medium ' + st.cls + '">' + st.label +
-      (e.status === 'partial' ? ' ' + money(e.paidCents) : '') + '</p></div></li>';
+      (e.status === 'partial' ? ' ' + money(e.paidCents) : '') + '</p></div></div>' +
+      '<div class="flex justify-end"><button type="button" class="btn-secondary" data-again="' + i + '">' +
+      icon('repeat', 'h-5 w-5') + 'Log this again</button></div></li>';
   }
 
   // Earnings by week: one series, so no legend; the readout above the bars
@@ -553,6 +572,29 @@
       status: 'paid', paid: '', photoUrl: null, uploading: false,
     };
 
+    // "Log this again": the seed is used once, then dropped, so coming back
+    // to this screen any other way opens the plain wizard. The day is today,
+    // not copied; a proof photo is never copied, it is proof of one day.
+    var seed = logSeed;
+    logSeed = null;
+    if (seed && seed.kind === 'work') {
+      // An older cached response may lack rateCents; falling back to total
+      // divided by quantity is only wrong there, where no rate was sent.
+      var rateCents = seed.rateCents == null
+        ? Math.round(seed.cents / seed.quantity) : seed.rateCents;
+      s.client = seed.client;
+      s.workType = seed.workType || '';
+      s.payBasis = seed.payBasis;
+      s.quantity = String(seed.quantity);
+      s.rate = String(rateCents / 100);
+      s.total = String(seed.cents / 100);
+      // A total set by hand stays as it was; only one worked out from
+      // quantity and rate is reworked when those change.
+      s.totalEdited = Math.round(seed.quantity * rateCents) !== seed.cents;
+      s.status = seed.status;
+      s.paid = seed.status === 'partial' ? String(seed.paidCents / 100) : '';
+    } else seed = null;
+
     function calcTotal() {
       if (s.totalEdited) return;
       var q = num(s.quantity), r = num(s.rate);
@@ -587,6 +629,8 @@
 
     function drawStep1() {
       app.innerHTML = stepHead('Day and client') +
+        (seed ? '<p class="rounded-lg bg-raised px-3 py-2 text-small text-muted">Copied from your entry for ' +
+          esc(seed.client) + ' on ' + shortDate(seed.date) + '. Check each step, then save.</p>' : '') +
         '<form id="step-form" class="flex flex-col gap-5" novalidate>' +
         dateField('date', 'Day worked', s.date) +
         clientPicker(data.clients, s.client) +
