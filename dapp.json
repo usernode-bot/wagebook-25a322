@@ -25,6 +25,15 @@
       "impact": ["public/app.js", "public/index.html", "styles/**", "wagebook.js"]
     },
     {
+      "id": "dashboard.month-total",
+      "name": "Dashboard shows this month's total above Recent entries (demo data)",
+      "path": "/?demo=1",
+      "expectSelector": "#month-total",
+      "expectText": "Earned in",
+      "visual": true,
+      "impact": ["public/app.js", "wagebook.js"]
+    },
+    {
       "id": "week-recap.demo",
       "name": "Dashboard shows this week by client with Share recap (demo data)",
       "path": "/?demo=1",

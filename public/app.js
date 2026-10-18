@@ -269,8 +269,14 @@
           icon('chevron', 'h-5 w-5 text-muted') + '</a></li>';
       }).join('') + '</ul></section>';
 
-    html += '<section><h2 class="section-label">Recent entries</h2><ul class="list" id="recent">' +
-      d.recent.map(entryRow).join('') + '</ul></section>';
+    var monthName = parseDate(d.today).toLocaleDateString('en', { month: 'long' });
+    html += '<section><h2 class="section-label">Recent entries</h2>' +
+      '<div id="month-total" class="mb-2 flex items-baseline justify-between gap-3 px-1">' +
+      '<p class="text-body">Earned in ' + esc(monthName) + ', ' +
+      d.monthDays + (d.monthDays === 1 ? ' day worked' : ' days worked') + '</p>' +
+      '<p class="shrink-0 text-body font-semibold tabular-nums">' + money(d.monthCents) + '</p>' +
+      '</div>' +
+      '<ul class="list" id="recent">' + d.recent.map(entryRow).join('') + '</ul></section>';
 
     app.innerHTML = html;
     wireChart(d.weeks);
