@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS clients (
 CREATE UNIQUE INDEX IF NOT EXISTS clients_user_name ON clients (user_id, (lower(name)));
 COMMENT ON TABLE clients IS 'staging:private';
 
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS advance_limit_percent INTEGER
+  CHECK (advance_limit_percent IN (0, 25, 50, 75, 100));
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS payday_kind TEXT
+  CHECK (payday_kind IN ('week', 'month'));
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS payday_day INTEGER
+  CHECK (payday_day BETWEEN 1 AND 31);
+
 CREATE TABLE IF NOT EXISTS work_logs (
   id BIGSERIAL PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -137,23 +144,31 @@ async function seedDemo(pool) {
       `INSERT INTO profiles (user_id, name, occupation, location)
        VALUES ($1, 'Staging demo worker', 'Carpenter', 'Staging demo town')
        ON CONFLICT (user_id) DO NOTHING`, [DEMO_USER]);
-    const names = ['Staging demo builder', 'Staging demo cafe', 'Staging demo family'];
+    const names = ['Staging demo builder', 'Staging demo cafe', 'Staging demo family',
+      'Staging demo shop'];
     const ids = {};
     for (const n of names) {
       const r = await db.query(
         'INSERT INTO clients (user_id, name) VALUES ($1, $2) RETURNING id', [DEMO_USER, n]);
       ids[n] = r.rows[0].id;
     }
+    // The demo builder pays every Saturday, as a fixed day rather than one
+    // taken from CURRENT_DATE, so a test pinned to a Saturday always sees it.
+    await db.query(
+      `UPDATE clients SET payday_kind = 'week', payday_day = 6
+       WHERE user_id = $1 AND lower(name) = 'staging demo builder'`, [DEMO_USER]);
     // [days ago, client, work type, basis, quantity, rate, status, paid]
     const logs = [
       [0, 'Staging demo builder', 'Roof frame', 'day', 1, 150000, 'unpaid', 0],
       [1, 'Staging demo builder', 'Roof frame', 'day', 1, 150000, 'unpaid', 0],
+      [1, 'Staging demo shop', 'Shelf repair', 'day', 1, 120000, 'unpaid', 0],
       [2, 'Staging demo cafe', 'Shelves', 'hour', 5, 25000, 'partial', 60000],
       [4, 'Staging demo builder', 'Door frames', 'day', 1, 150000, 'paid', 150000],
       [6, 'Staging demo family', 'Cupboard repair', 'hour', 3, 25000, 'paid', 75000],
       [8, 'Staging demo builder', 'Door frames', 'day', 1, 150000, 'paid', 150000],
       [9, 'Staging demo builder', 'Door frames', 'day', 1, 150000, 'paid', 150000],
       [13, 'Staging demo cafe', 'Counter top', 'day', 1, 175000, 'paid', 175000],
+      [3, 'Staging demo shop', 'Shelf repair', 'day', 1, 120000, 'unpaid', 0],
       [16, 'Staging demo builder', 'Floor boards', 'day', 1, 150000, 'paid', 150000],
       [20, 'Staging demo family', 'Window fix', 'hour', 4, 25000, 'paid', 100000],
       [23, 'Staging demo builder', 'Floor boards', 'day', 1, 150000, 'paid', 150000],
@@ -171,7 +186,8 @@ async function seedDemo(pool) {
     }
     // The builder's advance is covered by unpaid wages; the cafe's is not,
     // so a remaining advance balance shows too.
-    const advances = [[3, 'Staging demo builder', 200000], [5, 'Staging demo cafe', 150000]];
+    const advances = [[3, 'Staging demo builder', 200000], [5, 'Staging demo cafe', 150000],
+      [2, 'Staging demo shop', 100000]];
     for (const [ago, client, amount] of advances) {
       await db.query(
         `INSERT INTO advances (user_id, client_id, advance_date, amount_cents)
@@ -252,6 +268,31 @@ function settle(owedCents, advanceCents) {
     owedCents: Math.max(0, owedCents - advanceCents),
     advanceLeftCents: Math.max(0, advanceCents - owedCents),
   };
+}
+
+// The advance limit: a share of the unpaid wages that client owes. "near"
+// from 80% of the limit; any advance with no unpaid wages is "over".
+const DEFAULT_LIMIT_PCT = 50;
+const LIMIT_CHOICES = [0, 25, 50, 75, 100];
+function limitStatus(unpaidCents, advancedCents, pct) {
+  const limitPct = pct == null ? DEFAULT_LIMIT_PCT : pct;
+  if (limitPct === 0) return { limitPct, limitCents: null, limitLevel: 'off' };
+  const limitCents = Math.floor((unpaidCents * limitPct) / 100);
+  let limitLevel = 'safe';
+  if (advancedCents > limitCents) limitLevel = 'over';
+  else if (advancedCents > 0 && advancedCents * 100 >= limitCents * 80) limitLevel = 'near';
+  return { limitPct, limitCents, limitLevel };
+}
+
+// Is plain YYYY-MM-DD `today` this payday? A month date past the month's
+// end falls on its last day. `day` is the ISO weekday (1 Mon - 7 Sun) for
+// `week`, or the date of the month for `month`.
+function isPayday(kind, day, today) {
+  if ((kind !== 'week' && kind !== 'month') || !day) return false;
+  const d = new Date(today + 'T00:00:00Z');
+  if (kind === 'week') return ((d.getUTCDay() + 6) % 7) + 1 === day;
+  const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  return d.getUTCDate() === Math.min(day, last);
 }
 
 // The price maths, one definition used by the server and copied (shortened)
@@ -355,25 +396,27 @@ async function upsertClient(db, userId, name) {
   return r.rows[0].id;
 }
 
-async function clientBalances(db, owner) {
+async function clientBalances(db, owner, clientId) {
   // A day an earlier "Mark as paid" settled with advance money is `paid`
   // with paid_cents < total_cents: that gap is advance used, so it counts
   // against the advances, not as unpaid. Days still open count as unpaid.
   const r = await db.query(
-    `SELECT c.id, c.name,
+    `SELECT c.id, c.name, c.advance_limit_percent, c.payday_kind, c.payday_day,
        COALESCE((SELECT SUM(total_cents - paid_cents) FROM work_logs w
                  WHERE w.client_id = c.id AND w.status <> 'paid'), 0) AS unpaid,
        COALESCE((SELECT SUM(amount_cents) FROM advances a
                  WHERE a.client_id = c.id), 0)
          - COALESCE((SELECT SUM(total_cents - paid_cents) FROM work_logs w
                  WHERE w.client_id = c.id AND w.status = 'paid'), 0) AS advanced
-     FROM clients c WHERE c.user_id = $1
-     ORDER BY c.last_used_at DESC`, [owner]);
+     FROM clients c WHERE c.user_id = $1 ${clientId ? 'AND c.id = $2' : ''}
+     ORDER BY c.last_used_at DESC`, clientId ? [owner, clientId] : [owner]);
   return r.rows.map((row) => {
     const unpaid = Number(row.unpaid);
     const advanced = Math.max(0, Number(row.advanced));
     return { id: Number(row.id), name: row.name, unpaidCents: unpaid,
-      advancedCents: advanced, ...settle(unpaid, advanced) };
+      advancedCents: advanced, ...settle(unpaid, advanced),
+      ...limitStatus(unpaid, advanced, row.advance_limit_percent),
+      payday: row.payday_kind ? { kind: row.payday_kind, day: Number(row.payday_day) } : null };
   });
 }
 
@@ -477,7 +520,7 @@ function createRouter(pool) {
     if (!owner) {
       return res.json({ today, monthCents: 0, weekCents: 0, monthDays: 0,
         totalCents: 0, weeks: [], clients: [], thisWeek: [], recent: [], owedCents: 0,
-        advanceLeftCents: 0, priceAlerts: [] });
+        advanceLeftCents: 0, priceAlerts: [], paydays: [] });
     }
     const totals = await pool.query(
       `SELECT
@@ -509,6 +552,15 @@ function createRouter(pool) {
        ) e ORDER BY date DESC, created_at DESC LIMIT 8`, [owner]);
     const clients = await clientBalances(pool, owner);
     const thisWeek = await weekByClient(pool, owner, today, clients);
+    // Clients who pay today (the page's own date) and still have wages or
+    // advances open, for the dashboard's payday reminder.
+    const paydays = clients
+      .filter((c) => c.payday && isPayday(c.payday.kind, c.payday.day, today)
+        && (c.unpaidCents > 0 || c.advancedCents > 0))
+      .map((c) => ({ id: c.id, name: c.name, unpaidCents: c.unpaidCents,
+        advancedCents: c.advancedCents, owedCents: c.owedCents,
+        advanceLeftCents: c.advanceLeftCents, limitPct: c.limitPct,
+        limitLevel: c.limitLevel }));
     const priceAlerts = (await productSummaries(pool, owner, today))
       .filter((p) => p.belowGoal)
       .map((p) => ({ id: p.id, name: p.name, goalPct: p.goalPct, marginPct: p.marginPct,
@@ -523,6 +575,7 @@ function createRouter(pool) {
       weeks: weeks.rows.map((w) => ({ start: w.start, cents: Number(w.total) })),
       clients,
       thisWeek,
+      paydays,
       owedCents: clients.reduce((s, c) => s + c.owedCents, 0),
       advanceLeftCents: clients.reduce((s, c) => s + c.advanceLeftCents, 0),
       priceAlerts,
@@ -558,6 +611,55 @@ function createRouter(pool) {
       }),
       workTypes: types.rows.map((r) => r.work_type),
     });
+  });
+
+  // One client, for their own settings screen.
+  router.get('/api/clients/:id', async (req, res) => {
+    const owner = readOwner(req);
+    const id = Number(req.params.id);
+    const notFound = { error: 'That client is not in your book.' };
+    if (!owner || !Number.isInteger(id) || id <= 0) return res.status(404).json(notFound);
+    const rows = await clientBalances(pool, owner, id);
+    if (!rows[0]) return res.status(404).json(notFound);
+    res.json({ client: rows[0] });
+  });
+
+  // Save one client's advance limit and payday. Written by name, so a save
+  // from the demo view lands in the person's own book like every other save.
+  router.put('/api/client-settings', async (req, res) => {
+    const b = req.body || {};
+    const name = cleanText(b.name, 80);
+    if (!name) return res.status(400).json({ error: "Add the client's name." });
+    const limitPct = Number(b.limitPct);
+    if (!LIMIT_CHOICES.includes(limitPct)) {
+      return res.status(400).json({ error: 'Choose an advance limit.' });
+    }
+    const payday = b.payday && typeof b.payday === 'object' ? b.payday : null;
+    let kind = null;
+    let day = null;
+    if (payday) {
+      kind = payday.kind;
+      day = Number(payday.day);
+      if (kind === 'week') {
+        if (!Number.isInteger(day) || day < 1 || day > 7) {
+          return res.status(400).json({ error: 'Choose the payday weekday.' });
+        }
+      } else if (kind === 'month') {
+        if (!Number.isInteger(day) || day < 1 || day > 31) {
+          return res.status(400).json({ error: 'Enter a payday date from 1 to 31.' });
+        }
+      } else {
+        return res.status(400).json({ error: 'Choose a payday.' });
+      }
+    }
+    const r = await pool.query(
+      `INSERT INTO clients (user_id, name, advance_limit_percent, payday_kind, payday_day)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id, (lower(name))) DO UPDATE SET
+         advance_limit_percent = EXCLUDED.advance_limit_percent,
+         payday_kind = EXCLUDED.payday_kind, payday_day = EXCLUDED.payday_day
+       RETURNING id`, [String(req.user.id), name, limitPct, kind, day]);
+    res.json({ id: Number(r.rows[0].id) });
   });
 
   router.post('/api/work-logs', async (req, res) => {
@@ -621,8 +723,14 @@ function createRouter(pool) {
       const r = await db.query(
         `INSERT INTO advances (user_id, client_id, advance_date, amount_cents)
          VALUES ($1, $2, $3, $4) RETURNING id`, [userId, clientId, b.date, amount]);
+      // The limit status after this advance, so the page can say so. The
+      // limit never refuses an advance; it only warns.
+      const saved = (await clientBalances(db, userId, clientId))[0];
       await db.query('COMMIT');
-      res.status(201).json({ id: Number(r.rows[0].id) });
+      res.status(201).json({ id: Number(r.rows[0].id), limit: {
+        limitPct: saved.limitPct, limitCents: saved.limitCents,
+        limitLevel: saved.limitLevel, unpaidCents: saved.unpaidCents,
+        advancedCents: saved.advancedCents } });
     } catch (err) {
       await db.query('ROLLBACK').catch(() => {});
       throw err;
@@ -888,4 +996,5 @@ function createRouter(pool) {
 }
 
 module.exports = { migrate, createRouter, settle, suggestedPrice, priceFacts,
-  coverWithAdvance, weekByClient, mondayOf, OCCUPATIONS };
+  coverWithAdvance, weekByClient, mondayOf, limitStatus, isPayday, DEFAULT_LIMIT_PCT,
+  LIMIT_CHOICES, OCCUPATIONS };

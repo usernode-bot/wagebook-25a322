@@ -162,3 +162,11 @@ Re-theme by changing the token values there, keeping every text pair at
   always go to the signed-in person's own book.
 - "Today" and "this week" follow the page's local date (sent as `?today=`);
   weeks start on Monday.
+- Advance limits (`limitStatus()` in `wagebook.js`): a share of that
+  client's unpaid wages, default 50% (stored NULL), 0 = no limit, "close"
+  starts at 80% of the limit, and a client with no unpaid wages counts any
+  advance as over. Over the limit only warns; it never refuses an advance.
+- Payday is stored per client (`payday_kind`, `payday_day`): an ISO weekday
+  1-7 for weekly or a date 1-31 for monthly; a date past a short month's
+  end falls on its last day. The payday reminder is in-app only (dashboard
+  banner when opened on payday): the platform has no push notifications.
