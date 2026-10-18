@@ -32,6 +32,7 @@
   function parseDate(s) { var p = s.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
   function shortDate(s) { return parseDate(s).toLocaleDateString('en', { month: 'short', day: 'numeric' }); }
   function longDate(s) { return parseDate(s).toLocaleDateString('en', { weekday: 'long', month: 'long', day: 'numeric' }); }
+  function dayLabel(s) { return parseDate(s).toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' }); }
   var numFmt = new Intl.NumberFormat('en', { maximumFractionDigits: 2 });
   function money(cents) { return numFmt.format((cents || 0) / 100); }
   function num(v) { var n = parseFloat(String(v).replace(/,/g, '')); return isFinite(n) ? n : NaN; }
@@ -83,6 +84,7 @@
     tag: '<path d="M12 2H2v10l9.3 9.3a1 1 0 0 0 1.4 0l8.6-8.6a1 1 0 0 0 0-1.4z"/><circle cx="7" cy="7" r="1.5"/>',
     alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
     x: '<path d="M18 6 6 18M6 6l12 12"/>',
+    share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
     chevron: '<path d="m9 18 6-6-6-6"/>',
   };
   function icon(name, cls) {
@@ -136,6 +138,8 @@
       '<h1 class="text-heading">' + esc(title) + '</h1></header>';
   }
 
+  // The server's own error text is never shown here: on a 500 it can be a raw
+  // status message ("Internal Server Error"). A fixed sentence under the heading.
   function errorState(msg, retry, title) {
     // A raw HTTP status ("Internal Server Error") says nothing a person can
     // act on: show a plain line instead of the server's own words.
@@ -144,8 +148,8 @@
       ? esc(msg) + ' '
       : 'Something went wrong on our side. ';
     app.innerHTML = '<div class="state-error card"><p class="text-heading">' + esc(title || 'Could not load your wage book') + '</p>' +
-      '<p class="text-body text-muted">' + detail + 'Nothing you saved is lost.</p>' +
-      '<button type="button" class="btn-primary mt-2" id="retry">Retry</button></div>';
+      '<p class="text-body text-muted mt-1">' + detail + 'Nothing you saved is lost.</p>' +
+      '<button type="button" class="btn-primary min-h-14 text-heading mt-2 w-full" id="retry">Try again</button></div>';
     document.getElementById('retry').onclick = retry;
   }
 
@@ -242,6 +246,8 @@
 
     html += chart(d.weeks);
 
+    html += weekRecap(d);
+
     html += '<section><h2 class="section-label">Money by client</h2><ul class="list" id="client-balances">' +
       d.clients.map(function (c) {
         var line, cls = 'text-muted';
@@ -263,6 +269,112 @@
 
     app.innerHTML = html;
     wireChart(d.weeks);
+    wireWeekRecap(d.thisWeek || []);
+  }
+
+  // This week by client: the same list as "Money by client", but only this
+  // week's work and advances, with a recap to share and, while a client has
+  // open days, a one-tap Mark as paid.
+  function weekRecap(d) {
+    if (!d.thisWeek || !d.thisWeek.length) return '';
+    return '<section id="week-recap"><h2 class="section-label">This week by client</h2><ul class="list">' +
+      d.thisWeek.map(function (row, i) {
+        var line, cls = 'text-fg font-semibold';
+        if (row.owedCents > 0) line = 'Owes you ' + money(row.owedCents);
+        else if (row.advanceLeftCents > 0) { line = 'Advance left ' + money(row.advanceLeftCents); cls = 'text-accent font-semibold'; }
+        else { line = 'All paid'; cls = 'text-good font-semibold'; }
+        return '<li class="list-row flex-col items-stretch gap-2">' +
+          '<div class="flex items-baseline justify-between gap-3">' +
+          '<p class="truncate text-body font-medium">' + esc(row.client) + '</p>' +
+          '<p class="shrink-0 text-right text-body ' + cls + '">' + esc(line) + '</p></div>' +
+          '<div><p class="text-small text-muted">' + row.days + (row.days === 1 ? ' day worked' : ' days worked') +
+          ', wages ' + money(row.wagesCents) + '</p>' +
+          '<p class="text-small text-muted">Paid ' + money(row.paidCents) + ', advance ' + money(row.advanceCents) + '</p></div>' +
+          '<div class="flex gap-2">' +
+          '<button type="button" class="btn-secondary flex-1" data-recap="' + i + '">' + icon('share', 'h-5 w-5') + 'Share recap</button>' +
+          (row.hasUnpaid
+            ? '<button type="button" class="btn-secondary flex-1" data-mark-paid="' + i + '">' + icon('check', 'h-5 w-5') + 'Mark as paid</button>'
+            : '') +
+          '</div></li>';
+      }).join('') + '</ul></section>';
+  }
+
+  function wireWeekRecap(rows) {
+    app.querySelectorAll('[data-recap]').forEach(function (b) {
+      b.addEventListener('click', function () { shareRecap(rows[+b.getAttribute('data-recap')]); });
+    });
+    app.querySelectorAll('[data-mark-paid]').forEach(function (b) {
+      b.addEventListener('click', function () { markWeekPaid(rows[+b.getAttribute('data-mark-paid')], b); });
+    });
+  }
+
+  // The tidy text a client receives, so both sides can check it day by day.
+  function recapText(row) {
+    var prof = (me && me.profile) || {};
+    var lines = ['WageBook weekly recap'];
+    var worker = prof.name || (me && me.username);
+    if (worker) lines.push('Worker: ' + worker);
+    lines.push('Client: ' + row.client);
+    lines.push('Week: ' + dayLabel(row.start) + ' to ' + dayLabel(row.end || today()));
+    row.items.forEach(function (item) {
+      if (item.kind === 'advance') {
+        lines.push(dayLabel(item.date) + ': Advance ' + money(item.cents));
+        return;
+      }
+      var st = STATUS[item.status];
+      var qty = item.quantity + (item.payBasis === 'day'
+        ? (item.quantity === 1 ? ' day' : ' days') : (item.quantity === 1 ? ' hour' : ' hours'));
+      lines.push(dayLabel(item.date) + ': ' + [item.workType, qty, money(item.cents),
+        st.label + (item.status === 'partial' ? ' ' + money(item.paidCents) : '')]
+        .filter(Boolean).join(', '));
+    });
+    lines.push('');
+    lines.push('Days worked: ' + row.days);
+    lines.push('Wages: ' + money(row.wagesCents));
+    lines.push('Paid: ' + money(row.paidCents));
+    lines.push('Advance: ' + money(row.advanceCents));
+    lines.push('Left to pay: ' + money(row.owedCents));
+    if (row.advanceLeftCents > 0) lines.push('Advance left: ' + money(row.advanceLeftCents));
+    return lines.join('\n');
+  }
+
+  // The phone's share sheet first (pick WhatsApp there); without one, copy
+  // the text and open WhatsApp with it ready to send.
+  function shareRecap(row) {
+    var text = recapText(row);
+    function fallback() {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(function () {});
+      }
+      if (window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank') === null) {
+        toast('Recap copied. Paste it into WhatsApp.');
+      }
+    }
+    if (navigator.share) {
+      navigator.share({ text: text }).catch(function (err) {
+        if (err && err.name !== 'AbortError') fallback();
+      });
+    } else fallback();
+  }
+
+  function markWeekPaid(row, btn) {
+    if (me && me.demo) {
+      toast('Demo data can\'t be marked as paid. Log your own work to use this.');
+      return;
+    }
+    var original = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    api('/api/week-paid', { method: 'POST', body: { clientId: row.clientId, today: today() } })
+      .then(function () {
+        toast('Marked as paid');
+        renderDashboard();
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        btn.innerHTML = original;
+        toast(err.message);
+      });
   }
 
   // Balance summary: the three numbers people check most, above the buttons.
