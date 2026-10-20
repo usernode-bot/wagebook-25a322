@@ -484,15 +484,18 @@
       var dt = parseDate(w.start);
       var top = i === last ? 'This' : String(dt.getDate());
       var bottom = i === last ? 'week' : dt.toLocaleDateString('en', { month: 'short' });
-      return '<button type="button" class="group flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus" data-week="' + i + '" aria-label="Week of ' + esc(shortDate(w.start)) + ': ' + money(w.cents) + '">' +
+      return '<button type="button" class="group flex h-full min-h-11 min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-md py-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus" data-week="' + i + '" aria-label="Week of ' + esc(shortDate(w.start)) + ': ' + money(w.cents) + '">' +
         '<span class="flex w-full flex-1 items-end justify-center px-1">' +
           '<span class="block w-full max-w-8 rounded-t bg-accent ' + (i === last ? '' : 'opacity-50 group-hover:opacity-75') + '" style="height:' + Math.max(h, w.cents ? 3 : 1) + '%"></span>' +
         '</span>' +
         '<span class="flex w-full flex-col text-center text-small leading-tight text-muted"><span>' + esc(top) + '</span><span>' + esc(bottom) + '</span></span></button>';
     }).join('');
+    // The row runs the card's full width with no gaps between the bars'
+    // cells, so each bar button is at least 44px wide on a phone: the bar
+    // itself keeps its width (max-w-8) inside a wider cell.
     return '<section id="weekly-chart"><h2 class="section-label">Earnings by week</h2>' +
       '<div class="card"><p class="text-body" id="week-readout"></p>' +
-      '<div class="mt-3 flex h-44 items-stretch gap-1 border-b border-line" role="group" aria-label="Earnings for the last 8 weeks">' + bars + '</div>' +
+      '<div class="-mx-4 mt-3 flex h-44 items-stretch gap-0 border-b border-line" role="group" aria-label="Earnings for the last 8 weeks">' + bars + '</div>' +
       '<ul class="sr-only">' + weeks.map(function (w) { return '<li>Week of ' + esc(shortDate(w.start)) + ': ' + money(w.cents) + '</li>'; }).join('') + '</ul>' +
       '</div></section>';
   }
