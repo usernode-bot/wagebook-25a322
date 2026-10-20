@@ -591,6 +591,26 @@ function createRouter(pool) {
     });
   });
 
+  // Every month with work entries, newest first, for the "Earnings by
+  // month" screen. Grouped on to_char, not date_trunc, so a DATE is never
+  // turned into a timestamp and no time zone can move an entry into the
+  // next month. Hours count only hourly work; day-rate work counts days.
+  router.get('/api/months', async (req, res) => {
+    const owner = readOwner(req);
+    if (!owner) return res.json({ months: [] });
+    const r = await pool.query(
+      `SELECT to_char(work_date, 'YYYY-MM') AS month,
+         COALESCE(SUM(total_cents), 0) AS cents,
+         COALESCE(SUM(quantity) FILTER (WHERE pay_basis = 'hour'), 0) AS hours,
+         COUNT(DISTINCT work_date) FILTER (WHERE pay_basis = 'day') AS days
+       FROM work_logs WHERE user_id = $1
+       GROUP BY 1 ORDER BY 1 DESC`, [owner]);
+    res.json({
+      months: r.rows.map((m) => ({ month: m.month, cents: Number(m.cents),
+        hours: Number(m.hours), days: Number(m.days) })),
+    });
+  });
+
   // Frequent clients for the quick-pick chips, each with what was last
   // logged for them, so a repeat job is a couple of taps.
   router.get('/api/clients', async (req, res) => {

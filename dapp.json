@@ -90,6 +90,27 @@
       "expectText": "Prices to check"
     },
     {
+      "id": "months.demo",
+      "name": "Earnings by month lists each month with days, hours and pay (demo data)",
+      "path": "/months?demo=1",
+      "expectSelector": "#months [data-month]",
+      "expectText": "Earned",
+      "visual": true,
+      "impact": ["public/app.js", "wagebook.js"]
+    },
+    {
+      "name": "Earnings by month with an empty book says so",
+      "path": "/months",
+      "expectSelector": "#empty-months",
+      "expectText": "No months yet"
+    },
+    {
+      "name": "Dashboard's Earned this month tile opens Earnings by month (demo data)",
+      "path": "/?demo=1",
+      "expectSelector": "#summary a[data-nav=\"/months\"]",
+      "expectText": "See earnings by month"
+    },
+    {
       "name": "Prices and profit lists items and this week's ranking (demo data)",
       "path": "/prices?demo=1",
       "expectSelector": "#week-summary",
