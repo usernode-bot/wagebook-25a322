@@ -7,6 +7,7 @@
 //   /prices/:id  one item: change its prices, see its history
 //   /summary     "Monthly summary": every month's hours and pay
 //   /profile     your name, photo, work and town
+//   /months      "Earnings by month": hours and pay for every month worked
 //   /clients/:id one client: their advance limit and payday
 // Class names are written as whole literals so the Tailwind build sees them.
 (function () {
@@ -124,6 +125,7 @@
     if (p === '/advance') return renderAdvance();
     if (p === '/summary') return renderSummary();
     if (p === '/profile') return renderProfile();
+    if (p === '/months') return renderMonths();
     if (p === '/prices') return renderPrices();
     if (p === '/prices/new') return renderItem(null);
     var m = p.match(/^\/prices\/(\d+)$/);
@@ -249,7 +251,7 @@
     }
 
     html += '<section aria-label="Summary" id="summary" class="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line">' +
-      tile('calendar', 'Earned this month', d.monthCents, d.monthDays + (d.monthDays === 1 ? ' day worked' : ' days worked')) +
+      tile('calendar', 'Earned this month', d.monthCents, d.monthDays + (d.monthDays === 1 ? ' day worked' : ' days worked'), '/months') +
       tile('clock', 'Earned this week', d.weekCents, 'Since Monday') +
       tile('wallet', 'Unpaid wages owed to you', d.owedCents, 'After advances') +
       tile('banknote', 'Advances still to work off', d.advanceLeftCents, 'Not covered by wages yet') +
@@ -423,12 +425,23 @@
       '<p class="text-small text-muted">What clients still owe you after advances</p></section>';
   }
 
-  function tile(ic, label, cents, sub) {
-    return '<div class="flex flex-col gap-1 bg-surface p-4">' +
+  function tile(ic, label, cents, sub, nav) {
+    var inner =
       '<span class="text-accent">' + icon(ic, 'h-7 w-7') + '</span>' +
       '<p class="text-small font-medium text-muted">' + esc(label) + '</p>' +
       '<p class="text-title tabular-nums">' + money(cents) + '</p>' +
-      '<p class="text-small text-muted">' + esc(sub) + '</p></div>';
+      '<p class="text-small text-muted">' + esc(sub) + '</p>' +
+      (nav ? '<p class="flex items-center gap-1 text-small font-medium text-accent">See earnings by month' + icon('chevron', 'h-4 w-4') + '</p>' : '');
+    if (!nav) return '<div class="flex flex-col gap-1 bg-surface p-4">' + inner + '</div>';
+    return '<a href="' + href(nav) + '" data-nav="' + nav + '" id="open-months" class="flex flex-col gap-1 bg-surface p-4 hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus">' + inner + '</a>';
+  }
+
+  // The month's stamp: short month over the year, on the same raised tile.
+  function monthStamp(ym) {
+    var dt = parseDate(ym + '-01');
+    return '<div class="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-lg border border-line bg-raised leading-none">' +
+      '<span class="text-heading">' + dt.toLocaleDateString('en', { month: 'short' }) + '</span>' +
+      '<span class="text-small text-muted">' + dt.getFullYear() + '</span></div>';
   }
 
   // The signature: every entry carries a date stamp, like a page in a paper
@@ -477,15 +490,18 @@
       var dt = parseDate(w.start);
       var top = i === last ? 'This' : String(dt.getDate());
       var bottom = i === last ? 'week' : dt.toLocaleDateString('en', { month: 'short' });
-      return '<button type="button" class="group flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus" data-week="' + i + '" aria-label="Week of ' + esc(shortDate(w.start)) + ': ' + money(w.cents) + '">' +
+      return '<button type="button" class="group flex h-full min-h-11 min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-md py-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus" data-week="' + i + '" aria-label="Week of ' + esc(shortDate(w.start)) + ': ' + money(w.cents) + '">' +
         '<span class="flex w-full flex-1 items-end justify-center px-1">' +
           '<span class="block w-full max-w-8 rounded-t bg-accent ' + (i === last ? '' : 'opacity-50 group-hover:opacity-75') + '" style="height:' + Math.max(h, w.cents ? 3 : 1) + '%"></span>' +
         '</span>' +
         '<span class="flex w-full flex-col text-center text-small leading-tight text-muted"><span>' + esc(top) + '</span><span>' + esc(bottom) + '</span></span></button>';
     }).join('');
+    // The row runs the card's full width with no gaps between the bars'
+    // cells, so each bar button is at least 44px wide on a phone: the bar
+    // itself keeps its width (max-w-8) inside a wider cell.
     return '<section id="weekly-chart"><h2 class="section-label">Earnings by week</h2>' +
       '<div class="card"><p class="text-body" id="week-readout"></p>' +
-      '<div class="mt-3 flex h-44 items-stretch gap-1 border-b border-line" role="group" aria-label="Earnings for the last 8 weeks">' + bars + '</div>' +
+      '<div class="-mx-4 mt-3 flex h-44 items-stretch gap-0 border-b border-line" role="group" aria-label="Earnings for the last 8 weeks">' + bars + '</div>' +
       '<ul class="sr-only">' + weeks.map(function (w) { return '<li>Week of ' + esc(shortDate(w.start)) + ': ' + money(w.cents) + '</li>'; }).join('') + '</ul>' +
       '</div></section>';
   }
@@ -1421,6 +1437,40 @@
         saved('Profile saved');
       }).catch(function (err) { btn.disabled = false; formError(err.message); });
     });
+  }
+
+  // ── Earnings by month ────────────────────────────────────────────────────
+  function renderMonths() {
+    app.innerHTML = '<div class="flex flex-col gap-4" aria-busy="true"><div class="skeleton h-11 w-48"></div><div class="skeleton h-16 w-full"></div><div class="skeleton h-16 w-full"></div><div class="skeleton h-16 w-full"></div></div>';
+    Promise.all([me ? Promise.resolve(me) : loadMe(), api('/api/months')])
+      .then(function (r) { me = r[0]; drawMonths(r[1]); })
+      .catch(function (err) { errorState(err.message, renderMonths, 'Could not load your months'); });
+  }
+
+  function drawMonths(d) {
+    var html = backBar('Earnings by month') + demoNote();
+    if (!d.months || d.months.length === 0) {
+      html += '<section class="state-empty card" id="empty-months">' +
+        '<p class="text-heading">No months yet</p>' +
+        '<p class="text-body text-muted mt-1">Your earnings for each month show up here once you log a day\'s work.</p>' +
+        '<a href="' + href('/log') + '" data-nav="/log" class="btn-primary mt-2 min-h-14 text-heading w-full">Log today\'s work</a></section>';
+      app.innerHTML = html;
+      return;
+    }
+    html += '<p class="text-body text-muted">Wages for the work you did each month, paid or not.</p>' +
+      '<ul class="list" id="months">' + d.months.map(function (m) {
+        var parts = [];
+        if (m.days > 0) parts.push(m.days + (m.days === 1 ? ' day' : ' days'));
+        if (m.hours > 0) parts.push(numFmt.format(m.hours) + (m.hours === 1 ? ' hour' : ' hours'));
+        var worked = parts.length ? parts.join(' and ') + ' worked' : '';
+        var name = parseDate(m.month + '-01').toLocaleDateString('en', { month: 'long', year: 'numeric' });
+        return '<li class="list-row" data-month="' + esc(m.month) + '">' + monthStamp(m.month) +
+          '<div class="min-w-0 flex-1"><p class="text-body font-medium">' + esc(name) + '</p>' +
+          (worked ? '<p class="text-small text-muted">' + esc(worked) + '</p>' : '') + '</div>' +
+          '<div class="shrink-0 text-right"><p class="text-small text-muted">Earned</p>' +
+          '<p class="text-body font-semibold tabular-nums">' + money(m.cents) + '</p></div></li>';
+      }).join('') + '</ul>';
+    app.innerHTML = html;
   }
 
   render();
