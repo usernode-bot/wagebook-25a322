@@ -43,6 +43,27 @@
       "impact": ["public/app.js", "wagebook.js"]
     },
     {
+      "id": "summary.months",
+      "name": "Monthly summary lists each month's hours, days and pay (demo data)",
+      "path": "/summary?demo=1",
+      "expectSelector": "#months",
+      "expectText": "days worked",
+      "visual": true,
+      "impact": ["public/app.js", "wagebook.js"]
+    },
+    {
+      "name": "Monthly summary with no work offers to start logging",
+      "path": "/summary",
+      "expectSelector": "#empty-months",
+      "expectText": "No work logged yet"
+    },
+    {
+      "name": "Dashboard links to the monthly summary (demo data)",
+      "path": "/?demo=1",
+      "expectSelector": "#open-summary",
+      "expectText": "Monthly summary"
+    },
+    {
       "name": "Empty book shows a 3-step start guide",
       "path": "/",
       "expectSelector": "#start-steps",
