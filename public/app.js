@@ -5,6 +5,7 @@
 //   /prices      "Prices and profit": your items and this week's ranking
 //   /prices/new  add an item: costs, profit goal, suggested price
 //   /prices/:id  one item: change its prices, see its history
+//   /summary     "Monthly summary": every month's hours and pay
 //   /profile     your name, photo, work and town
 //   /months      "Earnings by month": hours and pay for every month worked
 //   /clients/:id one client: their advance limit and payday
@@ -88,6 +89,7 @@
     share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
     chevron: '<path d="m9 18 6-6-6-6"/>',
     repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+    chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
   };
   function icon(name, cls) {
     return '<svg class="' + (cls || 'h-6 w-6') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
@@ -121,6 +123,7 @@
     var p = location.pathname.replace(/\/+$/, '') || '/';
     if (p === '/log') return renderLog();
     if (p === '/advance') return renderAdvance();
+    if (p === '/summary') return renderSummary();
     if (p === '/profile') return renderProfile();
     if (p === '/months') return renderMonths();
     if (p === '/prices') return renderPrices();
@@ -191,6 +194,9 @@
         '<a href="' + href('/prices') + '" data-nav="/prices" class="btn-secondary min-h-14 py-2 text-heading" id="open-prices">' + icon('tag', 'h-6 w-6 shrink-0') +
           '<span class="flex flex-col text-center"><span>Prices and profit</span>' +
           '<span class="text-small font-normal text-muted">Your items, what they sell for, what you make</span></span></a>' +
+        '<a href="' + href('/summary') + '" data-nav="/summary" class="btn-secondary min-h-14 py-2 text-heading" id="open-summary">' + icon('chart', 'h-6 w-6 shrink-0') +
+          '<span class="flex flex-col text-center"><span>Monthly summary</span>' +
+          '<span class="text-small font-normal text-muted">Total hours and pay for each month</span></span></a>' +
       '</div>';
 
     // Drawn before the empty-book branch, so a vendor who never logs a work
@@ -514,6 +520,54 @@
       b.addEventListener('mouseenter', function () { show(i); });
       b.addEventListener('focus', function () { show(i); });
     });
+  }
+
+  // ── Monthly summary ──────────────────────────────────────────────────────
+  // Every month with work in the book, newest first: hours (and days, for
+  // day-rate work) on the left, the month's total pay on the right. Months
+  // with no entries are simply not listed, so a quiet month reads as one
+  // that has no row rather than a row of zeros.
+  function renderSummary() {
+    app.innerHTML = backBar('Monthly summary') +
+      '<div class="flex flex-col gap-4" aria-busy="true"><div class="skeleton h-14 w-full"></div><div class="skeleton h-24 w-full"></div><div class="skeleton h-24 w-full"></div></div>';
+    Promise.all([me ? Promise.resolve(me) : loadMe(), api('/api/months')])
+      .then(function (r) { drawSummary(r[1]); })
+      .catch(function (err) { errorState(err.message, renderSummary, 'Could not load your monthly summary'); });
+  }
+
+  function drawSummary(d) {
+    var html = backBar('Monthly summary') + demoNote();
+    if (!d.months.length) {
+      html += '<section class="state-empty card" id="empty-months">' +
+        '<p class="text-heading">No work logged yet</p>' +
+        '<p class="text-body text-muted">Each month\'s total hours and pay show up here once you start logging work.</p>' +
+        '<a href="' + href('/log') + '" data-nav="/log" class="btn-primary mt-2" id="summary-log-first">' + icon('plus', 'h-5 w-5') + 'Log today\'s work</a></section>';
+      app.innerHTML = html;
+      return;
+    }
+    html += '<section aria-label="Months"><h2 class="section-label">Months</h2><ul class="list" id="months">' +
+      d.months.map(monthRow).join('') + '</ul></section>';
+    app.innerHTML = html;
+  }
+
+  function monthRow(m) {
+    // A month is "YYYY-MM"; its first day carries the month's own name.
+    var dt = parseDate(m.month + '-01');
+    // The date stamp again, this time the month over the year: the summary
+    // is a page of the same paper wage book.
+    var tile = '<div class="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-lg border border-line bg-raised leading-none">' +
+      '<span class="text-heading">' + dt.toLocaleDateString('en', { month: 'short' }) + '</span>' +
+      '<span class="text-small text-muted">' + dt.getFullYear() + '</span></div>';
+    var worked = [];
+    if (m.hours > 0) worked.push(numFmt.format(m.hours) + (m.hours === 1 ? ' hour' : ' hours'));
+    if (m.days > 0) worked.push(numFmt.format(m.days) + (m.days === 1 ? ' day' : ' days'));
+    var sub = worked.length
+      ? '<p class="text-small text-muted">' + esc(worked.join(', ')) + ' worked</p>' : '';
+    return '<li class="list-row">' + tile +
+      '<div class="min-w-0 flex-1"><p class="truncate text-body font-medium">' +
+      esc(dt.toLocaleDateString('en', { month: 'long', year: 'numeric' })) + '</p>' +
+      sub + '</div>' +
+      '<p class="shrink-0 text-body font-semibold tabular-nums">' + money(m.totalCents) + '</p></li>';
   }
 
   // ── Shared form parts ────────────────────────────────────────────────────

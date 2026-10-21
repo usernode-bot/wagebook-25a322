@@ -594,10 +594,12 @@ function createRouter(pool) {
   // Every month with work entries, newest first, for the "Earnings by
   // month" screen. Grouped on to_char, not date_trunc, so a DATE is never
   // turned into a timestamp and no time zone can move an entry into the
-  // next month. Hours count only hourly work; day-rate work counts days.
+  // next month. Hours count only hourly work; day-rate work counts days,
+  // never one converted into the other. Months with no entries are not
+  // listed. Each month carries its pay as both `cents` and `totalCents`.
   router.get('/api/months', async (req, res) => {
     const owner = readOwner(req);
-    if (!owner) return res.json({ months: [] });
+    if (!owner) return res.json({ today: todayFor(req), months: [] });
     const r = await pool.query(
       `SELECT to_char(work_date, 'YYYY-MM') AS month,
          COALESCE(SUM(total_cents), 0) AS cents,
@@ -606,8 +608,9 @@ function createRouter(pool) {
        FROM work_logs WHERE user_id = $1
        GROUP BY 1 ORDER BY 1 DESC`, [owner]);
     res.json({
+      today: todayFor(req),
       months: r.rows.map((m) => ({ month: m.month, cents: Number(m.cents),
-        hours: Number(m.hours), days: Number(m.days) })),
+        totalCents: Number(m.cents), hours: Number(m.hours), days: Number(m.days) })),
     });
   });
 
