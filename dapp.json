@@ -34,6 +34,15 @@
       "impact": ["public/app.js", "wagebook.js"]
     },
     {
+      "id": "dashboard.month-card",
+      "name": "Dashboard shows this month's hours, days and pay in one card that opens the Monthly summary (demo data)",
+      "path": "/?demo=1",
+      "expectSelector": "#month-card[data-nav=\"/summary\"]",
+      "expectText": "This month",
+      "visual": true,
+      "impact": ["public/app.js", "wagebook.js"]
+    },
+    {
       "id": "week-recap.demo",
       "name": "Dashboard shows this week by client with Share recap (demo data)",
       "path": "/?demo=1",
@@ -126,9 +135,9 @@
       "expectText": "No months yet"
     },
     {
-      "name": "Dashboard's Earned this month tile opens Earnings by month (demo data)",
+      "name": "Dashboard links to Earnings by month under the This month card (demo data)",
       "path": "/?demo=1",
-      "expectSelector": "#summary a[data-nav=\"/months\"]",
+      "expectSelector": "#open-months[data-nav=\"/months\"]",
       "expectText": "See earnings by month"
     },
     {
