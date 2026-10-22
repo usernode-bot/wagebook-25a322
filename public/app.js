@@ -250,9 +250,10 @@
       return;
     }
 
+    html += monthCard(d);
+
     html += '<section aria-label="Summary" id="summary" class="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line">' +
-      tile('calendar', 'Earned this month', d.monthCents, d.monthDays + (d.monthDays === 1 ? ' day worked' : ' days worked'), '/months') +
-      tile('clock', 'Earned this week', d.weekCents, 'Since Monday') +
+      tile('clock', 'Earned this week', d.weekCents, 'Since Monday', true) +
       tile('wallet', 'Unpaid wages owed to you', d.owedCents, 'After advances') +
       tile('banknote', 'Advances still to work off', d.advanceLeftCents, 'Not covered by wages yet') +
       '</section>';
@@ -425,15 +426,37 @@
       '<p class="text-small text-muted">What clients still owe you after advances</p></section>';
   }
 
-  function tile(ic, label, cents, sub, nav) {
+  function tile(ic, label, cents, sub, wide) {
     var inner =
       '<span class="text-accent">' + icon(ic, 'h-7 w-7') + '</span>' +
       '<p class="text-small font-medium text-muted">' + esc(label) + '</p>' +
       '<p class="text-title tabular-nums">' + money(cents) + '</p>' +
-      '<p class="text-small text-muted">' + esc(sub) + '</p>' +
-      (nav ? '<p class="flex items-center gap-1 text-small font-medium text-accent">See earnings by month' + icon('chevron', 'h-4 w-4') + '</p>' : '');
-    if (!nav) return '<div class="flex flex-col gap-1 bg-surface p-4">' + inner + '</div>';
-    return '<a href="' + href(nav) + '" data-nav="' + nav + '" id="open-months" class="flex flex-col gap-1 bg-surface p-4 hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus">' + inner + '</a>';
+      '<p class="text-small text-muted">' + esc(sub) + '</p>';
+    return '<div class="flex flex-col gap-1 bg-surface p-4' + (wide ? ' col-span-2' : '') + '">' + inner + '</div>';
+  }
+
+  // This month at a glance: what was worked on the left, what was earned on
+  // the right, the month's own stamp on the tile. The whole card opens the
+  // Monthly summary; the link under it opens Earnings by month.
+  function monthCard(d) {
+    var dt = parseDate(d.today);
+    var worked = '';
+    if (d.monthHours > 0) worked += '<p class="text-heading tabular-nums">' + numFmt.format(d.monthHours) + (d.monthHours === 1 ? ' hour' : ' hours') + '</p>';
+    if (d.monthRateDays > 0) worked += '<p class="text-heading tabular-nums">' + numFmt.format(d.monthRateDays) + (d.monthRateDays === 1 ? ' day' : ' days') + '</p>';
+    if (!worked) worked = '<p class="text-body text-muted">No work yet</p>';
+    return '<section aria-label="This month" class="flex flex-col gap-1">' +
+        '<a href="' + href('/summary') + '" data-nav="/summary" id="month-card" class="card block hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">' +
+          '<div class="flex items-center gap-3">' + monthStamp(d.today.slice(0, 7)) +
+            '<div class="min-w-0 flex-1"><p class="text-heading">This month</p>' +
+            '<p class="text-small text-muted">' + esc(dt.toLocaleDateString('en', { month: 'long', year: 'numeric' })) + '</p></div>' +
+            icon('chevron', 'h-5 w-5 shrink-0 text-muted') + '</div>' +
+          '<div class="mt-3 flex justify-between gap-3 border-t border-line pt-3">' +
+            '<div><p class="text-small text-muted">Worked</p>' + worked + '</div>' +
+            '<div class="text-right"><p class="text-small text-muted">Earned</p>' +
+            '<p class="text-title tabular-nums">' + money(d.monthCents) + '</p></div></div>' +
+        '</a>' +
+        '<a href="' + href('/months') + '" data-nav="/months" id="open-months" class="inline-flex min-h-11 items-center gap-1 self-start px-1 text-small font-medium text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">' +
+          'See earnings by month' + icon('chevron', 'h-4 w-4') + '</a></section>';
   }
 
   // The month's stamp: short month over the year, on the same raised tile.

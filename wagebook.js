@@ -519,6 +519,7 @@ function createRouter(pool) {
     const today = todayFor(req);
     if (!owner) {
       return res.json({ today, monthCents: 0, weekCents: 0, monthDays: 0,
+        monthHours: 0, monthRateDays: 0,
         totalCents: 0, weeks: [], clients: [], thisWeek: [], recent: [], owedCents: 0,
         advanceLeftCents: 0, priceAlerts: [], paydays: [] });
     }
@@ -528,6 +529,10 @@ function createRouter(pool) {
            AND work_date < date_trunc('month', $2::date) + interval '1 month'), 0) AS month,
          COUNT(DISTINCT work_date) FILTER (WHERE work_date >= date_trunc('month', $2::date)
            AND work_date < date_trunc('month', $2::date) + interval '1 month') AS month_days,
+         COALESCE(SUM(quantity) FILTER (WHERE pay_basis = 'hour' AND work_date >= date_trunc('month', $2::date)
+           AND work_date < date_trunc('month', $2::date) + interval '1 month'), 0) AS month_hours,
+         COUNT(DISTINCT work_date) FILTER (WHERE pay_basis = 'day' AND work_date >= date_trunc('month', $2::date)
+           AND work_date < date_trunc('month', $2::date) + interval '1 month') AS month_rate_days,
          COALESCE(SUM(total_cents) FILTER (WHERE work_date >= date_trunc('week', $2::date)
            AND work_date < date_trunc('week', $2::date) + interval '1 week'), 0) AS week,
          COALESCE(SUM(total_cents), 0) AS total
@@ -572,6 +577,8 @@ function createRouter(pool) {
       weekCents: Number(t.week),
       totalCents: Number(t.total),
       monthDays: Number(t.month_days),
+      monthHours: Number(t.month_hours),
+      monthRateDays: Number(t.month_rate_days),
       weeks: weeks.rows.map((w) => ({ start: w.start, cents: Number(w.total) })),
       clients,
       thisWeek,
